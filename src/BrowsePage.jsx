@@ -612,9 +612,6 @@ function BrowsePage() {
                 <div className="flex items-end justify-between gap-4">
                   <div>
                     <h2 className="text-2xl font-semibold">Series</h2>
-                    <p className="text-sm text-slate-400 mt-1">
-                      Curated TV picks, updated weekly.
-                    </p>
                   </div>
                 </div>
               </div>
@@ -965,6 +962,10 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
   ]
     .filter(Boolean)
     .concat(seasons ? [seasons] : []);
+  const handleWatch = () => {
+    const type = mediaType === "tv" ? "tv" : "movie";
+    window.location.hash = `#watch?id=${movie.id}&type=${type}`;
+  };
 
   return (
     <motion.div
@@ -1016,7 +1017,10 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
             </p>
           )}
           <div className="flex flex-wrap gap-3">
-            <button className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium inline-flex items-center gap-2">
+            <button
+              onClick={handleWatch}
+              className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium inline-flex items-center gap-2"
+            >
               <PlayIcon />
               Watch
             </button>
