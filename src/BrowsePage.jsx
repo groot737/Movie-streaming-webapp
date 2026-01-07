@@ -1,0 +1,896 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+
+/*
+  Local dev:
+  - Vite: export VITE_TMDB_API_KEY=your_key
+  - Next: export NEXT_PUBLIC_TMDB_API_KEY=your_key
+*/
+const TMDB_API_KEY =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_TMDB_API_KEY) ||
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_TMDB_API_KEY) ||
+  "";
+
+const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
+const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
+
+const NAV_LINKS = [
+  { label: "Home", href: "#" },
+  { label: "Browse", href: "#browse" },
+  { label: "Rooms", href: "#rooms" },
+];
+
+const CATEGORY_LABELS = {
+  trending: "Trending now",
+  popular: "Popular on GioStream",
+  topRated: "Top rated",
+  upcoming: "Upcoming",
+};
+
+const fadeUp = {
+  hidden: { opacity: 0, y: 14 },
+  show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
+};
+
+const buildTmdbUrl = (path, params = {}) => {
+  const url = new URL(`${TMDB_BASE_URL}${path}`);
+  const searchParams = new URLSearchParams(params);
+  searchParams.set("api_key", TMDB_API_KEY);
+  url.search = searchParams.toString();
+  return url.toString();
+};
+
+const fetchTmdbJson = async (url, signal) => {
+  const res = await fetch(url, { signal });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      data?.status_message || `TMDB request failed (${res.status}).`;
+    throw new Error(message);
+  }
+  return data;
+};
+
+const tmdbClient = {
+  getCategoryMovies: async (category, page, signal) => {
+    const path =
+      category === "trending"
+        ? "/trending/movie/week"
+        : category === "popular"
+        ? "/movie/popular"
+        : category === "topRated"
+        ? "/movie/top_rated"
+        : "/movie/upcoming";
+    const url = buildTmdbUrl(path, { page: String(page) });
+    return fetchTmdbJson(url, signal);
+  },
+  searchMovies: async (query, page, signal) => {
+    const url = buildTmdbUrl("/search/movie", {
+      query,
+      page: String(page),
+      include_adult: "false",
+    });
+    return fetchTmdbJson(url, signal);
+  },
+  getMovieDetails: async (movieId, signal) => {
+    const url = buildTmdbUrl(`/movie/${movieId}`);
+    return fetchTmdbJson(url, signal);
+  },
+};
+
+const buildEmptyRow = () => ({
+  movies: [],
+  loading: true,
+  error: "",
+  page: 1,
+  totalPages: 1,
+});
+
+function BrowsePage() {
+  const [rows, setRows] = useState({
+    trending: buildEmptyRow(),
+    popular: buildEmptyRow(),
+    topRated: buildEmptyRow(),
+    upcoming: buildEmptyRow(),
+  });
+  const [heroMovie, setHeroMovie] = useState(null);
+  const [searchInput, setSearchInput] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchPage, setSearchPage] = useState(1);
+  const [searchMovies, setSearchMovies] = useState([]);
+  const [searchTotalPages, setSearchTotalPages] = useState(1);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchLoadingMore, setSearchLoadingMore] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchRefreshKey, setSearchRefreshKey] = useState(0);
+  const [selectedMovie, setSelectedMovie] = useState(null);
+  const [details, setDetails] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
+
+  const cacheRef = useRef({
+    categories: {},
+    search: {},
+    details: {},
+  });
+  const rowAbortRef = useRef({});
+  const searchAbortRef = useRef(null);
+
+  const isSearchMode = searchQuery.trim().length > 0;
+
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    const timeout = setTimeout(() => setSearchQuery(trimmed), 400);
+    return () => clearTimeout(timeout);
+  }, [searchInput]);
+
+  useEffect(() => {
+    setSearchPage(1);
+    setSearchMovies([]);
+    setSearchTotalPages(1);
+    setSearchError("");
+  }, [searchQuery]);
+
+  const hydrateSearchFromCache = (query, pageCount) => {
+    const pages = [];
+    for (let idx = 1; idx <= pageCount; idx += 1) {
+      const pageData = cacheRef.current.search[query]?.[idx];
+      if (pageData?.results?.length) {
+        pages.push(...pageData.results);
+      }
+    }
+    setSearchMovies(pages);
+  };
+
+  const updateRow = (category, patch) => {
+    setRows((prev) => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        ...patch,
+      },
+    }));
+  };
+
+  const fetchRow = async (category, force = false) => {
+    if (!TMDB_API_KEY) {
+      updateRow(category, {
+        loading: false,
+        error: "Missing TMDB API key.",
+      });
+      return;
+    }
+    if (rowAbortRef.current[category]) {
+      rowAbortRef.current[category].abort();
+    }
+    const controller = new AbortController();
+    rowAbortRef.current[category] = controller;
+
+    const cached = cacheRef.current.categories[category]?.[1];
+    if (cached && !force) {
+      updateRow(category, {
+        movies: cached.results || [],
+        totalPages: cached.total_pages || 1,
+        loading: false,
+        error: "",
+      });
+      if (category === "trending" && cached.results?.[0]) {
+        setHeroMovie(cached.results[0]);
+      }
+      return;
+    }
+
+    updateRow(category, { loading: true, error: "" });
+    try {
+      const response = await tmdbClient.getCategoryMovies(
+        category,
+        1,
+        controller.signal
+      );
+      cacheRef.current.categories[category] = {
+        ...(cacheRef.current.categories[category] || {}),
+        1: response,
+      };
+      updateRow(category, {
+        movies: response.results || [],
+        totalPages: response.total_pages || 1,
+        loading: false,
+        error: "",
+      });
+      if (category === "trending" && response.results?.[0]) {
+        setHeroMovie(response.results[0]);
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        updateRow(category, {
+          loading: false,
+          error: err.message || "Something went wrong.",
+        });
+      }
+    }
+  };
+
+  useEffect(() => {
+    Object.keys(CATEGORY_LABELS).forEach((category) => {
+      fetchRow(category);
+    });
+    return () => {
+      Object.keys(rowAbortRef.current).forEach((category) => {
+        rowAbortRef.current[category]?.abort();
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isSearchMode) {
+      setSearchMovies([]);
+      setSearchLoading(false);
+      setSearchLoadingMore(false);
+      setSearchError("");
+      return;
+    }
+    if (!TMDB_API_KEY) {
+      setSearchError("Missing TMDB API key.");
+      setSearchLoading(false);
+      return;
+    }
+    if (searchAbortRef.current) {
+      searchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    searchAbortRef.current = controller;
+
+    const cached = cacheRef.current.search[searchQuery]?.[searchPage];
+    if (cached) {
+      hydrateSearchFromCache(searchQuery, searchPage);
+      setSearchTotalPages(cached.total_pages || 1);
+      setSearchLoading(false);
+      setSearchLoadingMore(false);
+      setSearchError("");
+      return;
+    }
+
+    if (searchPage === 1) {
+      setSearchLoading(true);
+    } else {
+      setSearchLoadingMore(true);
+    }
+    setSearchError("");
+
+    const run = async () => {
+      try {
+        const response = await tmdbClient.searchMovies(
+          searchQuery,
+          searchPage,
+          controller.signal
+        );
+        cacheRef.current.search[searchQuery] = {
+          ...(cacheRef.current.search[searchQuery] || {}),
+          [searchPage]: response,
+        };
+        hydrateSearchFromCache(searchQuery, searchPage);
+        setSearchTotalPages(response.total_pages || 1);
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setSearchError(err.message || "Something went wrong.");
+        }
+      } finally {
+        setSearchLoading(false);
+        setSearchLoadingMore(false);
+      }
+    };
+
+    run();
+
+    return () => controller.abort();
+  }, [isSearchMode, searchQuery, searchPage, searchRefreshKey]);
+
+  const searchHasMore = searchPage < searchTotalPages;
+
+  const handleOpenMovie = async (movie) => {
+    setSelectedMovie(movie);
+    setDetails(null);
+    setDetailsError("");
+    if (cacheRef.current.details[movie.id]) {
+      setDetails(cacheRef.current.details[movie.id]);
+      return;
+    }
+    setDetailsLoading(true);
+    try {
+      const controller = new AbortController();
+      const data = await tmdbClient.getMovieDetails(movie.id, controller.signal);
+      cacheRef.current.details[movie.id] = data;
+      setDetails(data);
+    } catch (err) {
+      setDetailsError(err.message || "Unable to load details.");
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  const handleCloseMovie = () => {
+    setSelectedMovie(null);
+    setDetails(null);
+    setDetailsError("");
+  };
+
+  const heroBackdrop = heroMovie?.backdrop_path
+    ? `${BACKDROP_BASE}${heroMovie.backdrop_path}`
+    : null;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
+      <Navbar
+        searchInput={searchInput}
+        onSearchChange={setSearchInput}
+        onCreate={() => console.log("Create room")}
+      />
+
+      <main className="relative">
+        <HeroBanner
+          movie={heroMovie}
+          backdrop={heroBackdrop}
+          onOpen={handleOpenMovie}
+        />
+
+        <section id="browse" className="max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-10">
+          {isSearchMode ? (
+            <div>
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h2 className="text-2xl font-semibold">Search results</h2>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Results for "{searchQuery}"
+                  </p>
+                </div>
+                <button
+                  className="text-xs text-slate-400 hover:text-slate-200"
+                  onClick={() => setSearchInput("")}
+                >
+                  Clear search
+                </button>
+              </div>
+
+              {searchError && !searchLoading && (
+                <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300 mt-6">
+                  <div>{searchError}</div>
+                  <button
+                    className="mt-4 px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500 transition"
+                    onClick={() => setSearchRefreshKey((k) => k + 1)}
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              <MovieGrid
+                movies={searchMovies}
+                loading={searchLoading}
+                loadingMore={searchLoadingMore}
+                onOpen={handleOpenMovie}
+              />
+
+              {!searchLoading && !searchError && searchMovies.length === 0 && (
+                <div className="text-sm text-slate-400 mt-6">
+                  No movies found.
+                </div>
+              )}
+
+              <div className="flex items-center justify-center mt-8">
+                {searchHasMore && (
+                  <button
+                    onClick={() => setSearchPage((p) => p + 1)}
+                    className="px-5 py-3 rounded-xl border border-slate-800 text-sm text-slate-300 hover:border-slate-600 transition"
+                    disabled={searchLoadingMore}
+                  >
+                    {searchLoadingMore ? "Loading..." : "Load more"}
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : (
+            Object.keys(CATEGORY_LABELS).map((category) => (
+              <MovieRow
+                key={category}
+                title={CATEGORY_LABELS[category]}
+                movies={rows[category].movies}
+                loading={rows[category].loading}
+                error={rows[category].error}
+                onRetry={() => fetchRow(category, true)}
+                onOpen={handleOpenMovie}
+              />
+            ))
+          )}
+
+          <div className="text-xs text-slate-500">Powered by TMDB</div>
+        </section>
+      </main>
+
+      <Footer />
+
+      <AnimatePresence>
+        {selectedMovie && (
+          <MovieModal
+            movie={selectedMovie}
+            details={details}
+            loading={detailsLoading}
+            error={detailsError}
+            onClose={handleCloseMovie}
+          />
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function Navbar({ searchInput, onSearchChange, onCreate }) {
+  const [open, setOpen] = useState(false);
+  const [showMobileSearch, setShowMobileSearch] = useState(false);
+
+  return (
+    <header className="sticky top-0 z-50 backdrop-blur bg-slate-950/70 border-b border-slate-900/80">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 flex items-center justify-between gap-4">
+        <div className="text-lg font-semibold tracking-tight">Giostream</div>
+        <nav className="hidden md:flex items-center gap-6 text-sm text-slate-300">
+          {NAV_LINKS.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              className="hover:text-slate-100 transition"
+            >
+              {link.label}
+            </a>
+          ))}
+        </nav>
+        <div className="flex items-center gap-3">
+          <div className="hidden lg:flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-800 px-3 py-2">
+            <SearchIcon />
+            <input
+              value={searchInput}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search movies..."
+              className="bg-transparent text-sm text-slate-200 focus:outline-none w-52"
+            />
+          </div>
+          <button
+            onClick={() => setShowMobileSearch((v) => !v)}
+            className="lg:hidden border border-slate-800 rounded-lg p-2"
+            aria-label="Toggle search"
+          >
+            <SearchIcon />
+          </button>
+          <button
+            onClick={onCreate}
+            className="hidden sm:inline-flex px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+          >
+            Create Room
+          </button>
+          <button
+            className="md:hidden border border-slate-800 rounded-lg p-2"
+            onClick={() => setOpen((v) => !v)}
+            aria-label="Toggle menu"
+          >
+            <MenuIcon />
+          </button>
+        </div>
+      </div>
+
+      {showMobileSearch && (
+        <div className="lg:hidden border-t border-slate-900/80 bg-slate-950/95">
+          <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
+            <div className="flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-800 px-3 py-2">
+              <SearchIcon />
+              <input
+                value={searchInput}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Search movies..."
+                className="bg-transparent text-sm text-slate-200 focus:outline-none w-full"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="md:hidden border-t border-slate-900/80 bg-slate-950/95 overflow-hidden"
+          >
+            <div className="max-w-6xl mx-auto px-4 sm:px-6 py-4 space-y-3">
+              {NAV_LINKS.map((link) => (
+                <a
+                  key={link.href}
+                  href={link.href}
+                  className="block text-sm text-slate-300"
+                  onClick={() => setOpen(false)}
+                >
+                  {link.label}
+                </a>
+              ))}
+              <button
+                onClick={onCreate}
+                className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium"
+              >
+                Create Room
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </header>
+  );
+}
+
+function HeroBanner({ movie, backdrop, onOpen }) {
+  return (
+    <section className="relative overflow-hidden">
+      <div
+        className="absolute inset-0 bg-center bg-cover"
+        style={{
+          backgroundImage: backdrop
+            ? `url(${backdrop})`
+            : "radial-gradient(circle at top, rgba(14,165,233,0.12), rgba(2,6,23,0.95))",
+        }}
+      />
+      <div className="absolute inset-0 bg-gradient-to-b from-slate-950/40 via-slate-950/80 to-slate-950" />
+      <div className="relative max-w-6xl mx-auto px-4 sm:px-6 py-16 sm:py-24">
+        <motion.div initial="hidden" animate="show" variants={fadeUp}>
+          <div className="text-xs uppercase tracking-[0.3em] text-slate-400">
+            Featured tonight
+          </div>
+          <h1 className="mt-4 text-4xl sm:text-5xl lg:text-6xl font-semibold tracking-tight">
+            {movie?.title || "Movie night, curated"}
+          </h1>
+          <p className="mt-5 text-slate-300 max-w-xl">
+            {movie?.overview ||
+              "Explore trending, top rated, and upcoming picks powered by TMDB."}
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <button
+              onClick={() => movie && onOpen(movie)}
+              className="px-5 py-3 rounded-xl bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+              disabled={!movie}
+            >
+              More info
+            </button>
+            <button className="px-5 py-3 rounded-xl border border-slate-700 text-slate-100 hover:border-slate-500 transition">
+              Add to list
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    </section>
+  );
+}
+
+function MovieRow({ title, movies, loading, error, onRetry, onOpen }) {
+  const railRef = useRef(null);
+
+  const scrollRail = (direction) => {
+    if (!railRef.current) return;
+    const offset = direction === "left" ? -360 : 360;
+    railRef.current.scrollBy({ left: offset, behavior: "smooth" });
+  };
+
+  return (
+    <section>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-xl sm:text-2xl font-semibold">{title}</h2>
+        <div className="flex items-center gap-2">
+          {error && (
+            <button
+              onClick={onRetry}
+              className="text-xs text-slate-400 hover:text-slate-200"
+            >
+              Retry
+            </button>
+          )}
+          <button
+            className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-800 bg-slate-900/60 text-slate-200 hover:border-slate-600 transition"
+            onClick={() => scrollRail("left")}
+            aria-label="Scroll left"
+          >
+            <ArrowLeftIcon />
+          </button>
+          <button
+            className="hidden sm:inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-800 bg-slate-900/60 text-slate-200 hover:border-slate-600 transition"
+            onClick={() => scrollRail("right")}
+            aria-label="Scroll right"
+          >
+            <ArrowRightIcon />
+          </button>
+        </div>
+      </div>
+      {error && (
+        <div className="text-sm text-slate-400 mt-3">{error}</div>
+      )}
+      <div className="relative mt-4">
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-10 bg-gradient-to-r from-slate-950 to-transparent" />
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-16 bg-gradient-to-l from-slate-950 to-transparent" />
+        <div
+          ref={railRef}
+          className="flex gap-4 overflow-x-auto pb-4 pr-6 scrollbar-hide scroll-smooth"
+        >
+          {loading &&
+            Array.from({ length: 8 }).map((_, idx) => (
+              <SkeletonCard key={idx} size="row" />
+            ))}
+          {!loading &&
+            movies.map((movie) => (
+              <MovieCard
+                key={movie.id}
+                movie={movie}
+                size="row"
+                onClick={() => onOpen(movie)}
+              />
+            ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function MovieGrid({ movies, loading, loadingMore, onOpen }) {
+  return (
+    <div className="grid gap-4 grid-cols-2 md:grid-cols-4 lg:grid-cols-6 mt-6">
+      {loading &&
+        Array.from({ length: 12 }).map((_, idx) => <SkeletonCard key={idx} />)}
+      {!loading &&
+        movies.map((movie) => (
+          <MovieCard
+            key={movie.id}
+            movie={movie}
+            onClick={() => onOpen(movie)}
+          />
+        ))}
+      {loadingMore &&
+        Array.from({ length: 6 }).map((_, idx) => (
+          <SkeletonCard key={`more-${idx}`} />
+        ))}
+    </div>
+  );
+}
+
+function MovieCard({ movie, onClick, size = "grid" }) {
+  const poster = movie.poster_path ? `${POSTER_BASE}${movie.poster_path}` : null;
+  const year = movie.release_date ? movie.release_date.slice(0, 4) : "--";
+  const rating = movie.vote_average ? movie.vote_average.toFixed(1) : "--";
+
+  return (
+    <motion.button
+      onClick={onClick}
+      whileHover={{ y: -4 }}
+      className={`group text-left rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden hover:border-slate-600 transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 flex h-full flex-col ${
+        size === "row" ? "w-40 flex-shrink-0" : ""
+      }`}
+    >
+      <div className="relative w-full aspect-[2/3] bg-slate-800 flex items-center justify-center">
+        {poster ? (
+          <img
+            src={poster}
+            alt={movie.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="text-xs text-slate-500 px-3 text-center">
+            No poster available
+          </div>
+        )}
+        <div className="absolute top-2 right-2 px-2 py-1 rounded-full text-[10px] bg-slate-950/80 border border-slate-700 text-slate-200">
+          {rating}
+        </div>
+      </div>
+      <div className="p-3 flex flex-1 flex-col">
+        <div className="text-sm font-semibold text-slate-100 line-clamp-1 min-h-[24px]">
+          {movie.title}
+        </div>
+        <div className="text-xs text-slate-400 mt-1">{year}</div>
+      </div>
+    </motion.button>
+  );
+}
+
+function MovieModal({ movie, details, loading, error, onClose }) {
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  const backdrop = movie.backdrop_path
+    ? `${BACKDROP_BASE}${movie.backdrop_path}`
+    : null;
+
+  const runtime = details?.runtime ? `${details.runtime} min` : "--";
+  const year = movie.release_date ? movie.release_date.slice(0, 4) : "--";
+  const genres = details?.genres?.map((g) => g.name).join(" / ") || "--";
+  const rating = movie.vote_average ? movie.vote_average.toFixed(1) : "--";
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="w-full max-w-3xl rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden"
+      >
+        <div className="relative h-48 sm:h-64 bg-slate-800">
+          {backdrop ? (
+            <img src={backdrop} alt="" className="h-full w-full object-cover" />
+          ) : (
+            <div className="h-full w-full flex items-center justify-center text-slate-500">
+              No backdrop
+            </div>
+          )}
+          <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/40 to-transparent" />
+          <button
+            ref={closeButtonRef}
+            onClick={onClose}
+            className="absolute top-3 right-3 px-3 py-1 rounded-full text-xs bg-slate-950/80 border border-slate-700"
+          >
+            Close
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <h3 className="text-xl font-semibold">{movie.title}</h3>
+            <div className="text-sm text-slate-400 mt-1">
+              {year} / {runtime} / {genres} / {rating} rating
+            </div>
+          </div>
+          {loading && (
+            <div className="text-sm text-slate-400">Loading details...</div>
+          )}
+          {error && <div className="text-sm text-slate-400">{error}</div>}
+          {!loading && !error && (
+            <p className="text-sm text-slate-300">
+              {details?.overview || movie.overview || "No overview available."}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-3">
+            <button className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium inline-flex items-center gap-2">
+              <PlayIcon />
+              Watch
+            </button>
+            <button className="px-4 py-2 rounded-lg border border-slate-700">
+              Invite to Room
+            </button>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function SkeletonCard({ size = "grid" }) {
+  return (
+    <div
+      className={`rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden animate-pulse ${
+        size === "row" ? "w-40 flex-shrink-0" : ""
+      }`}
+    >
+      <div className="w-full aspect-[2/3] bg-slate-800" />
+      <div className="p-3 space-y-2">
+        <div className="h-3 bg-slate-800 rounded w-3/4" />
+        <div className="h-3 bg-slate-800 rounded w-1/3" />
+      </div>
+    </div>
+  );
+}
+
+function Footer() {
+  return (
+    <footer className="border-t border-slate-900/80 bg-slate-950">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-10 text-sm text-slate-400 flex flex-col sm:flex-row justify-between gap-4">
+        <div>
+          <div className="font-semibold text-slate-200">Giostream</div>
+          <div className="mt-1">Personal project. Private rooms only.</div>
+        </div>
+        <div className="space-y-1">
+          <div>Powered by TMDB</div>
+          <div>(c) 2026 GioStream</div>
+        </div>
+      </div>
+    </footer>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <line x1="3" y1="6" x2="21" y2="6" />
+      <line x1="3" y1="12" x2="21" y2="12" />
+      <line x1="3" y1="18" x2="21" y2="18" />
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <circle cx="11" cy="11" r="7" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </svg>
+  );
+}
+
+function PlayIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <polygon points="8 5 19 12 8 19 8 5" />
+    </svg>
+  );
+}
+
+function ArrowLeftIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+
+function ArrowRightIcon() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+    >
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+
+export default BrowsePage;
