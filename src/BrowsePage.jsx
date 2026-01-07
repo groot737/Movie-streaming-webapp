@@ -136,6 +136,7 @@ function BrowsePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchPage, setSearchPage] = useState(1);
   const [searchResults, setSearchResults] = useState([]);
+  const [searchFilter, setSearchFilter] = useState("all");
   const [searchTotalPages, setSearchTotalPages] = useState(1);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchLoadingMore, setSearchLoadingMore] = useState(false);
@@ -170,6 +171,7 @@ function BrowsePage() {
     setSearchResults([]);
     setSearchTotalPages(1);
     setSearchError("");
+    setSearchFilter("all");
   }, [searchQuery]);
 
   const hydrateSearchFromCache = (query, pageCount) => {
@@ -196,6 +198,33 @@ function BrowsePage() {
     }
     setSearchResults(pages);
   };
+
+  const searchCounts = useMemo(
+    () =>
+      searchResults.reduce(
+        (acc, item) => {
+          if (item.mediaType === "tv") {
+            acc.tv += 1;
+          } else {
+            acc.movie += 1;
+          }
+          acc.total += 1;
+          return acc;
+        },
+        { total: 0, movie: 0, tv: 0 }
+      ),
+    [searchResults]
+  );
+
+  const filteredSearchResults = useMemo(() => {
+    if (searchFilter === "movie") {
+      return searchResults.filter((item) => item.mediaType === "movie");
+    }
+    if (searchFilter === "tv") {
+      return searchResults.filter((item) => item.mediaType === "tv");
+    }
+    return searchResults;
+  }, [searchResults, searchFilter]);
 
   const updateMovieRow = (category, patch) => {
     setMovieRows((prev) => ({
@@ -492,7 +521,7 @@ function BrowsePage() {
                   </p>
                 </div>
                 <button
-                  className="text-xs text-slate-400 hover:text-slate-200"
+                  className="text-xs px-3 py-1.5 rounded-full border border-slate-700 text-slate-100 bg-slate-900/70 hover:border-slate-500 hover:bg-slate-900 transition"
                   onClick={() => setSearchInput("")}
                 >
                   Clear search
@@ -511,22 +540,48 @@ function BrowsePage() {
                 </div>
               )}
 
+              {!searchLoading && !searchError && (
+                <>
+                  <div className="mt-5 flex flex-wrap gap-2">
+                    {[
+                      { id: "all", label: `All (${searchCounts.total})` },
+                      {
+                        id: "movie",
+                        label: `Movies (${searchCounts.movie})`,
+                      },
+                      { id: "tv", label: `Series (${searchCounts.tv})` },
+                    ].map((option) => (
+                      <button
+                        key={option.id}
+                        onClick={() => setSearchFilter(option.id)}
+                        className={`px-3 py-1.5 rounded-full text-xs border transition ${
+                          searchFilter === option.id
+                            ? "bg-cyan-500 text-slate-950 border-cyan-400"
+                            : "border-slate-800 text-slate-300 hover:border-slate-600"
+                        }`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                  {filteredSearchResults.length === 0 && (
+                    <div className="text-sm text-slate-400 mt-6">
+                      {searchResults.length === 0
+                        ? "No movies or series found."
+                        : "No results for this filter."}
+                    </div>
+                  )}
+                </>
+              )}
+
               <MovieGrid
-                movies={searchResults}
+                movies={filteredSearchResults}
                 loading={searchLoading}
                 loadingMore={searchLoadingMore}
                 onOpen={(item) =>
                   handleOpenMedia(item, item.mediaType || "movie")
                 }
               />
-
-              {!searchLoading &&
-                !searchError &&
-                searchResults.length === 0 && (
-                  <div className="text-sm text-slate-400 mt-6">
-                    No movies or series found.
-                  </div>
-                )}
 
               <div className="flex items-center justify-center mt-8">
                 {searchHasMore && (
@@ -732,9 +787,6 @@ function HeroBanner({ movie, backdrop, onOpen }) {
               disabled={!movie}
             >
               More info
-            </button>
-            <button className="px-5 py-3 rounded-xl border border-slate-700 text-slate-100 hover:border-slate-500 transition">
-              Add to list
             </button>
           </div>
         </motion.div>
