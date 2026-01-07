@@ -21,11 +21,18 @@ const NAV_LINKS = [
   { label: "Rooms", href: "#rooms" },
 ];
 
-const CATEGORY_LABELS = {
+const MOVIE_CATEGORY_LABELS = {
   trending: "Trending now",
   popular: "Popular on GioStream",
   topRated: "Top rated",
   upcoming: "Upcoming",
+};
+
+const SERIES_CATEGORY_LABELS = {
+  trending: "Trending series",
+  popular: "Popular series",
+  topRated: "Top rated series",
+  onTheAir: "On the air",
 };
 
 const fadeUp = {
@@ -65,6 +72,18 @@ const tmdbClient = {
     const url = buildTmdbUrl(path, { page: String(page) });
     return fetchTmdbJson(url, signal);
   },
+  getCategorySeries: async (category, page, signal) => {
+    const path =
+      category === "trending"
+        ? "/trending/tv/week"
+        : category === "popular"
+        ? "/tv/popular"
+        : category === "topRated"
+        ? "/tv/top_rated"
+        : "/tv/on_the_air";
+    const url = buildTmdbUrl(path, { page: String(page) });
+    return fetchTmdbJson(url, signal);
+  },
   searchMovies: async (query, page, signal) => {
     const url = buildTmdbUrl("/search/movie", {
       query,
@@ -73,8 +92,20 @@ const tmdbClient = {
     });
     return fetchTmdbJson(url, signal);
   },
+  searchSeries: async (query, page, signal) => {
+    const url = buildTmdbUrl("/search/tv", {
+      query,
+      page: String(page),
+      include_adult: "false",
+    });
+    return fetchTmdbJson(url, signal);
+  },
   getMovieDetails: async (movieId, signal) => {
     const url = buildTmdbUrl(`/movie/${movieId}`);
+    return fetchTmdbJson(url, signal);
+  },
+  getSeriesDetails: async (seriesId, signal) => {
+    const url = buildTmdbUrl(`/tv/${seriesId}`);
     return fetchTmdbJson(url, signal);
   },
 };
@@ -88,33 +119,42 @@ const buildEmptyRow = () => ({
 });
 
 function BrowsePage() {
-  const [rows, setRows] = useState({
+  const [movieRows, setMovieRows] = useState({
     trending: buildEmptyRow(),
     popular: buildEmptyRow(),
     topRated: buildEmptyRow(),
     upcoming: buildEmptyRow(),
   });
+  const [seriesRows, setSeriesRows] = useState({
+    trending: buildEmptyRow(),
+    popular: buildEmptyRow(),
+    topRated: buildEmptyRow(),
+    onTheAir: buildEmptyRow(),
+  });
   const [heroMovie, setHeroMovie] = useState(null);
   const [searchInput, setSearchInput] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchPage, setSearchPage] = useState(1);
-  const [searchMovies, setSearchMovies] = useState([]);
+  const [searchResults, setSearchResults] = useState([]);
   const [searchTotalPages, setSearchTotalPages] = useState(1);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchLoadingMore, setSearchLoadingMore] = useState(false);
   const [searchError, setSearchError] = useState("");
   const [searchRefreshKey, setSearchRefreshKey] = useState(0);
-  const [selectedMovie, setSelectedMovie] = useState(null);
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const [selectedMediaType, setSelectedMediaType] = useState("movie");
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
 
   const cacheRef = useRef({
     categories: {},
+    seriesCategories: {},
     search: {},
     details: {},
   });
-  const rowAbortRef = useRef({});
+  const movieRowAbortRef = useRef({});
+  const seriesRowAbortRef = useRef({});
   const searchAbortRef = useRef(null);
 
   const isSearchMode = searchQuery.trim().length > 0;
@@ -127,7 +167,7 @@ function BrowsePage() {
 
   useEffect(() => {
     setSearchPage(1);
-    setSearchMovies([]);
+    setSearchResults([]);
     setSearchTotalPages(1);
     setSearchError("");
   }, [searchQuery]);
@@ -136,15 +176,29 @@ function BrowsePage() {
     const pages = [];
     for (let idx = 1; idx <= pageCount; idx += 1) {
       const pageData = cacheRef.current.search[query]?.[idx];
-      if (pageData?.results?.length) {
-        pages.push(...pageData.results);
+      if (!pageData) continue;
+      if (pageData.movie?.results?.length) {
+        pages.push(
+          ...pageData.movie.results.map((item) => ({
+            ...item,
+            mediaType: "movie",
+          }))
+        );
+      }
+      if (pageData.tv?.results?.length) {
+        pages.push(
+          ...pageData.tv.results.map((item) => ({
+            ...item,
+            mediaType: "tv",
+          }))
+        );
       }
     }
-    setSearchMovies(pages);
+    setSearchResults(pages);
   };
 
-  const updateRow = (category, patch) => {
-    setRows((prev) => ({
+  const updateMovieRow = (category, patch) => {
+    setMovieRows((prev) => ({
       ...prev,
       [category]: {
         ...prev[category],
@@ -153,23 +207,33 @@ function BrowsePage() {
     }));
   };
 
-  const fetchRow = async (category, force = false) => {
+  const updateSeriesRow = (category, patch) => {
+    setSeriesRows((prev) => ({
+      ...prev,
+      [category]: {
+        ...prev[category],
+        ...patch,
+      },
+    }));
+  };
+
+  const fetchMovieRow = async (category, force = false) => {
     if (!TMDB_API_KEY) {
-      updateRow(category, {
+      updateMovieRow(category, {
         loading: false,
         error: "Missing TMDB API key.",
       });
       return;
     }
-    if (rowAbortRef.current[category]) {
-      rowAbortRef.current[category].abort();
+    if (movieRowAbortRef.current[category]) {
+      movieRowAbortRef.current[category].abort();
     }
     const controller = new AbortController();
-    rowAbortRef.current[category] = controller;
+    movieRowAbortRef.current[category] = controller;
 
     const cached = cacheRef.current.categories[category]?.[1];
     if (cached && !force) {
-      updateRow(category, {
+      updateMovieRow(category, {
         movies: cached.results || [],
         totalPages: cached.total_pages || 1,
         loading: false,
@@ -181,7 +245,7 @@ function BrowsePage() {
       return;
     }
 
-    updateRow(category, { loading: true, error: "" });
+    updateMovieRow(category, { loading: true, error: "" });
     try {
       const response = await tmdbClient.getCategoryMovies(
         category,
@@ -192,7 +256,7 @@ function BrowsePage() {
         ...(cacheRef.current.categories[category] || {}),
         1: response,
       };
-      updateRow(category, {
+      updateMovieRow(category, {
         movies: response.results || [],
         totalPages: response.total_pages || 1,
         loading: false,
@@ -203,7 +267,59 @@ function BrowsePage() {
       }
     } catch (err) {
       if (err.name !== "AbortError") {
-        updateRow(category, {
+        updateMovieRow(category, {
+          loading: false,
+          error: err.message || "Something went wrong.",
+        });
+      }
+    }
+  };
+
+  const fetchSeriesRow = async (category, force = false) => {
+    if (!TMDB_API_KEY) {
+      updateSeriesRow(category, {
+        loading: false,
+        error: "Missing TMDB API key.",
+      });
+      return;
+    }
+    if (seriesRowAbortRef.current[category]) {
+      seriesRowAbortRef.current[category].abort();
+    }
+    const controller = new AbortController();
+    seriesRowAbortRef.current[category] = controller;
+
+    const cached = cacheRef.current.seriesCategories[category]?.[1];
+    if (cached && !force) {
+      updateSeriesRow(category, {
+        movies: cached.results || [],
+        totalPages: cached.total_pages || 1,
+        loading: false,
+        error: "",
+      });
+      return;
+    }
+
+    updateSeriesRow(category, { loading: true, error: "" });
+    try {
+      const response = await tmdbClient.getCategorySeries(
+        category,
+        1,
+        controller.signal
+      );
+      cacheRef.current.seriesCategories[category] = {
+        ...(cacheRef.current.seriesCategories[category] || {}),
+        1: response,
+      };
+      updateSeriesRow(category, {
+        movies: response.results || [],
+        totalPages: response.total_pages || 1,
+        loading: false,
+        error: "",
+      });
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        updateSeriesRow(category, {
           loading: false,
           error: err.message || "Something went wrong.",
         });
@@ -212,19 +328,25 @@ function BrowsePage() {
   };
 
   useEffect(() => {
-    Object.keys(CATEGORY_LABELS).forEach((category) => {
-      fetchRow(category);
+    Object.keys(MOVIE_CATEGORY_LABELS).forEach((category) => {
+      fetchMovieRow(category);
+    });
+    Object.keys(SERIES_CATEGORY_LABELS).forEach((category) => {
+      fetchSeriesRow(category);
     });
     return () => {
-      Object.keys(rowAbortRef.current).forEach((category) => {
-        rowAbortRef.current[category]?.abort();
+      Object.keys(movieRowAbortRef.current).forEach((category) => {
+        movieRowAbortRef.current[category]?.abort();
+      });
+      Object.keys(seriesRowAbortRef.current).forEach((category) => {
+        seriesRowAbortRef.current[category]?.abort();
       });
     };
   }, []);
 
   useEffect(() => {
     if (!isSearchMode) {
-      setSearchMovies([]);
+      setSearchResults([]);
       setSearchLoading(false);
       setSearchLoadingMore(false);
       setSearchError("");
@@ -244,7 +366,11 @@ function BrowsePage() {
     const cached = cacheRef.current.search[searchQuery]?.[searchPage];
     if (cached) {
       hydrateSearchFromCache(searchQuery, searchPage);
-      setSearchTotalPages(cached.total_pages || 1);
+      const totalPages = Math.max(
+        cached.movie?.total_pages || 1,
+        cached.tv?.total_pages || 1
+      );
+      setSearchTotalPages(totalPages);
       setSearchLoading(false);
       setSearchLoadingMore(false);
       setSearchError("");
@@ -260,17 +386,33 @@ function BrowsePage() {
 
     const run = async () => {
       try {
-        const response = await tmdbClient.searchMovies(
-          searchQuery,
-          searchPage,
-          controller.signal
-        );
+        const [movieResult, seriesResult] = await Promise.allSettled([
+          tmdbClient.searchMovies(searchQuery, searchPage, controller.signal),
+          tmdbClient.searchSeries(searchQuery, searchPage, controller.signal),
+        ]);
+
+        const movieResponse =
+          movieResult.status === "fulfilled" ? movieResult.value : null;
+        const seriesResponse =
+          seriesResult.status === "fulfilled" ? seriesResult.value : null;
+
+        if (!movieResponse && !seriesResponse) {
+          throw new Error("Search failed. Please try again.");
+        }
+
         cacheRef.current.search[searchQuery] = {
           ...(cacheRef.current.search[searchQuery] || {}),
-          [searchPage]: response,
+          [searchPage]: {
+            movie: movieResponse,
+            tv: seriesResponse,
+          },
         };
         hydrateSearchFromCache(searchQuery, searchPage);
-        setSearchTotalPages(response.total_pages || 1);
+        const totalPages = Math.max(
+          movieResponse?.total_pages || 1,
+          seriesResponse?.total_pages || 1
+        );
+        setSearchTotalPages(totalPages);
       } catch (err) {
         if (err.name !== "AbortError") {
           setSearchError(err.message || "Something went wrong.");
@@ -288,19 +430,24 @@ function BrowsePage() {
 
   const searchHasMore = searchPage < searchTotalPages;
 
-  const handleOpenMovie = async (movie) => {
-    setSelectedMovie(movie);
+  const handleOpenMedia = async (media, type) => {
+    setSelectedMedia(media);
+    setSelectedMediaType(type);
     setDetails(null);
     setDetailsError("");
-    if (cacheRef.current.details[movie.id]) {
-      setDetails(cacheRef.current.details[movie.id]);
+    const cacheKey = `${type}-${media.id}`;
+    if (cacheRef.current.details[cacheKey]) {
+      setDetails(cacheRef.current.details[cacheKey]);
       return;
     }
     setDetailsLoading(true);
     try {
       const controller = new AbortController();
-      const data = await tmdbClient.getMovieDetails(movie.id, controller.signal);
-      cacheRef.current.details[movie.id] = data;
+      const data =
+        type === "movie"
+          ? await tmdbClient.getMovieDetails(media.id, controller.signal)
+          : await tmdbClient.getSeriesDetails(media.id, controller.signal);
+      cacheRef.current.details[cacheKey] = data;
       setDetails(data);
     } catch (err) {
       setDetailsError(err.message || "Unable to load details.");
@@ -310,7 +457,7 @@ function BrowsePage() {
   };
 
   const handleCloseMovie = () => {
-    setSelectedMovie(null);
+    setSelectedMedia(null);
     setDetails(null);
     setDetailsError("");
   };
@@ -331,7 +478,7 @@ function BrowsePage() {
         <HeroBanner
           movie={heroMovie}
           backdrop={heroBackdrop}
-          onOpen={handleOpenMovie}
+          onOpen={(movie) => handleOpenMedia(movie, "movie")}
         />
 
         <section id="browse" className="max-w-6xl mx-auto px-4 sm:px-6 py-10 space-y-10">
@@ -365,17 +512,21 @@ function BrowsePage() {
               )}
 
               <MovieGrid
-                movies={searchMovies}
+                movies={searchResults}
                 loading={searchLoading}
                 loadingMore={searchLoadingMore}
-                onOpen={handleOpenMovie}
+                onOpen={(item) =>
+                  handleOpenMedia(item, item.mediaType || "movie")
+                }
               />
 
-              {!searchLoading && !searchError && searchMovies.length === 0 && (
-                <div className="text-sm text-slate-400 mt-6">
-                  No movies found.
-                </div>
-              )}
+              {!searchLoading &&
+                !searchError &&
+                searchResults.length === 0 && (
+                  <div className="text-sm text-slate-400 mt-6">
+                    No movies or series found.
+                  </div>
+                )}
 
               <div className="flex items-center justify-center mt-8">
                 {searchHasMore && (
@@ -390,17 +541,40 @@ function BrowsePage() {
               </div>
             </div>
           ) : (
-            Object.keys(CATEGORY_LABELS).map((category) => (
-              <MovieRow
-                key={category}
-                title={CATEGORY_LABELS[category]}
-                movies={rows[category].movies}
-                loading={rows[category].loading}
-                error={rows[category].error}
-                onRetry={() => fetchRow(category, true)}
-                onOpen={handleOpenMovie}
-              />
-            ))
+            <>
+              {Object.keys(MOVIE_CATEGORY_LABELS).map((category) => (
+                <MovieRow
+                  key={category}
+                  title={MOVIE_CATEGORY_LABELS[category]}
+                  movies={movieRows[category].movies}
+                  loading={movieRows[category].loading}
+                  error={movieRows[category].error}
+                  onRetry={() => fetchMovieRow(category, true)}
+                  onOpen={(movie) => handleOpenMedia(movie, "movie")}
+                />
+              ))}
+              <div className="pt-2">
+                <div className="flex items-end justify-between gap-4">
+                  <div>
+                    <h2 className="text-2xl font-semibold">Series</h2>
+                    <p className="text-sm text-slate-400 mt-1">
+                      Curated TV picks, updated weekly.
+                    </p>
+                  </div>
+                </div>
+              </div>
+              {Object.keys(SERIES_CATEGORY_LABELS).map((category) => (
+                <MovieRow
+                  key={`series-${category}`}
+                  title={SERIES_CATEGORY_LABELS[category]}
+                  movies={seriesRows[category].movies}
+                  loading={seriesRows[category].loading}
+                  error={seriesRows[category].error}
+                  onRetry={() => fetchSeriesRow(category, true)}
+                  onOpen={(series) => handleOpenMedia(series, "tv")}
+                />
+              ))}
+            </>
           )}
 
           <div className="text-xs text-slate-500">Powered by TMDB</div>
@@ -410,9 +584,10 @@ function BrowsePage() {
       <Footer />
 
       <AnimatePresence>
-        {selectedMovie && (
+        {selectedMedia && (
           <MovieModal
-            movie={selectedMovie}
+            movie={selectedMedia}
+            mediaType={selectedMediaType}
             details={details}
             loading={detailsLoading}
             error={detailsError}
@@ -449,7 +624,7 @@ function Navbar({ searchInput, onSearchChange, onCreate }) {
             <input
               value={searchInput}
               onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search movies..."
+              placeholder="Search movies & series..."
               className="bg-transparent text-sm text-slate-200 focus:outline-none w-52"
             />
           </div>
@@ -481,12 +656,12 @@ function Navbar({ searchInput, onSearchChange, onCreate }) {
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
             <div className="flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-800 px-3 py-2">
               <SearchIcon />
-              <input
-                value={searchInput}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="Search movies..."
-                className="bg-transparent text-sm text-slate-200 focus:outline-none w-full"
-              />
+            <input
+              value={searchInput}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Search movies & series..."
+              className="bg-transparent text-sm text-slate-200 focus:outline-none w-full"
+            />
             </div>
           </div>
         </div>
@@ -643,7 +818,7 @@ function MovieGrid({ movies, loading, loadingMore, onOpen }) {
       {!loading &&
         movies.map((movie) => (
           <MovieCard
-            key={movie.id}
+            key={`${movie.mediaType || "movie"}-${movie.id}`}
             movie={movie}
             onClick={() => onOpen(movie)}
           />
@@ -658,7 +833,9 @@ function MovieGrid({ movies, loading, loadingMore, onOpen }) {
 
 function MovieCard({ movie, onClick, size = "grid" }) {
   const poster = movie.poster_path ? `${POSTER_BASE}${movie.poster_path}` : null;
-  const year = movie.release_date ? movie.release_date.slice(0, 4) : "--";
+  const title = movie.title || movie.name || "Untitled";
+  const releaseDate = movie.release_date || movie.first_air_date;
+  const year = releaseDate ? releaseDate.slice(0, 4) : "--";
   const rating = movie.vote_average ? movie.vote_average.toFixed(1) : "--";
 
   return (
@@ -673,7 +850,7 @@ function MovieCard({ movie, onClick, size = "grid" }) {
         {poster ? (
           <img
             src={poster}
-            alt={movie.title}
+            alt={title}
             className="h-full w-full object-cover"
             loading="lazy"
           />
@@ -688,7 +865,7 @@ function MovieCard({ movie, onClick, size = "grid" }) {
       </div>
       <div className="p-3 flex flex-1 flex-col">
         <div className="text-sm font-semibold text-slate-100 line-clamp-1 min-h-[24px]">
-          {movie.title}
+          {title}
         </div>
         <div className="text-xs text-slate-400 mt-1">{year}</div>
       </div>
@@ -696,7 +873,7 @@ function MovieCard({ movie, onClick, size = "grid" }) {
   );
 }
 
-function MovieModal({ movie, details, loading, error, onClose }) {
+function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
   const closeButtonRef = useRef(null);
 
   useEffect(() => {
@@ -714,10 +891,28 @@ function MovieModal({ movie, details, loading, error, onClose }) {
     ? `${BACKDROP_BASE}${movie.backdrop_path}`
     : null;
 
-  const runtime = details?.runtime ? `${details.runtime} min` : "--";
-  const year = movie.release_date ? movie.release_date.slice(0, 4) : "--";
-  const genres = details?.genres?.map((g) => g.name).join(" / ") || "--";
-  const rating = movie.vote_average ? movie.vote_average.toFixed(1) : "--";
+  const title = movie.title || movie.name || "Untitled";
+  const runtimeValue =
+    mediaType === "tv" ? details?.episode_run_time?.[0] : details?.runtime;
+  const runtime = runtimeValue ? `${runtimeValue} min` : null;
+  const releaseDate = movie.release_date || movie.first_air_date;
+  const year = releaseDate ? releaseDate.slice(0, 4) : null;
+  const genres = details?.genres?.length
+    ? details.genres.map((g) => g.name).join(" / ")
+    : null;
+  const ratingValue = movie.vote_average ? movie.vote_average.toFixed(1) : null;
+  const seasons =
+    mediaType === "tv" && details?.number_of_seasons
+      ? `${details.number_of_seasons} seasons`
+      : null;
+  const metaParts = [
+    year,
+    runtime,
+    genres,
+    ratingValue && `${ratingValue} rating`,
+  ]
+    .filter(Boolean)
+    .concat(seasons ? [seasons] : []);
 
   return (
     <motion.div
@@ -754,9 +949,9 @@ function MovieModal({ movie, details, loading, error, onClose }) {
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <h3 className="text-xl font-semibold">{movie.title}</h3>
+            <h3 className="text-xl font-semibold">{title}</h3>
             <div className="text-sm text-slate-400 mt-1">
-              {year} / {runtime} / {genres} / {rating} rating
+              {metaParts.join(" / ")}
             </div>
           </div>
           {loading && (
