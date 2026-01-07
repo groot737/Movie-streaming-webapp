@@ -11,12 +11,12 @@ A modern React-based movie streaming web application landing page built with Vit
 - **Responsive Design**: Mobile-first design that works everywhere
 - **Smooth Animations**: Rich animations powered by Framer Motion
 
-## 📋 Prerequisites
+## Prerequisites
 
 - Node.js 16+ and npm installed
 - TMDB API key (get one at [https://www.themoviedb.org/settings/api](https://www.themoviedb.org/settings/api))
 
-## 🛠️ Installation
+## Installation
 
 1. **Clone the repository** (if applicable) or navigate to the project directory:
 ```bash
@@ -35,7 +35,7 @@ npm install
 VITE_TMDB_API_KEY=your_api_key_here
 ```
 
-## 🏃‍♂️ Running the Application
+## Running the Application
 
 ### Development Server
 ```bash
@@ -69,7 +69,7 @@ Movie-streaming-webapp/
 └── .env                   # Environment variables (not in git)
 ```
 
-## 🎨 Tech Stack
+## Tech Stack
 
 - **React 18** - UI library
 - **Vite** - Build tool and dev server
@@ -77,7 +77,7 @@ Movie-streaming-webapp/
 - **Framer Motion** - Animation library
 - **TMDB API** - Movie database
 
-## 📝 Available Scripts
+## Available Scripts
 
 - `npm run dev` - Start development server
 - `npm run build` - Build for production
@@ -97,10 +97,3 @@ This is a personal project, but feel free to fork and modify as needed.
 ## 📄 License
 
 Private project for personal use.
-
-## 🎬 Getting a TMDB API Key
-
-1. Create an account at [TMDB](https://www.themoviedb.org/)
-2. Go to Settings → API
-3. Request an API key (choose "Developer" option)
-4. Copy your API key and add it to your `.env` file
