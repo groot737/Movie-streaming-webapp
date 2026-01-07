@@ -264,7 +264,7 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
             <div className="space-y-4">
               <div className="relative left-1/2 right-1/2 -ml-[50vw] -mr-[50vw] w-screen -mt-4 sm:-mt-6">
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden mx-4 sm:mx-6">
-                  <div className="aspect-[3/1] bg-slate-900">
+                  <div className="aspect-[1/1] sm:aspect-[3/1] bg-slate-900">
                     {playerUrl ? (
                       <iframe
                         title="Player"
