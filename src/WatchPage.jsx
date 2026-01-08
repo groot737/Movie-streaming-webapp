@@ -80,6 +80,10 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
   const episodesRailRef = useRef(null);
 
   useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
+  useEffect(() => {
     if (!TMDB_API_KEY) {
       setError("Missing TMDB API key.");
       setLoading(false);
@@ -228,9 +232,6 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
             </a>
             <a href="#browse" className="hover:text-slate-100 transition">
               Browse
-            </a>
-            <a href="#rooms" className="hover:text-slate-100 transition">
-              Rooms
             </a>
           </nav>
           <div className="text-xs text-slate-400">

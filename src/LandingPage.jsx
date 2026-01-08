@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 /*
@@ -143,6 +143,8 @@ const stagger = {
 
 function LandingPage() {
   const [heroBackdrop, setHeroBackdrop] = useState("");
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState("signin");
 
   useEffect(() => {
     const prev = document.documentElement.style.scrollBehavior;
@@ -160,9 +162,14 @@ function LandingPage() {
     console.log("Join room");
   };
 
+  const handleOpenAuth = (mode = "signin") => {
+    setAuthMode(mode);
+    setShowAuthModal(true);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      <Navbar onCreate={handleCreateRoom} onJoin={handleJoinRoom} />
+      <Navbar onSignIn={() => handleOpenAuth("signin")} onJoin={handleJoinRoom} />
 
       <main className="relative">
         <section className="relative overflow-hidden">
@@ -491,11 +498,22 @@ function LandingPage() {
           </div>
         </div>
       </footer>
+      <AnimatePresence>
+        {showAuthModal && (
+          <AuthModal
+            mode={authMode}
+            onClose={() => setShowAuthModal(false)}
+            onToggleMode={() =>
+              setAuthMode((prev) => (prev === "signin" ? "register" : "signin"))
+            }
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function Navbar({ onCreate, onJoin }) {
+function Navbar({ onSignIn, onJoin }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -515,10 +533,10 @@ function Navbar({ onCreate, onJoin }) {
         </nav>
         <div className="hidden md:flex items-center gap-3">
           <button
-            onClick={onCreate}
+            onClick={onSignIn}
             className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
           >
-            Create Room
+            Sign in
           </button>
           <button
             onClick={onJoin}
@@ -558,10 +576,10 @@ function Navbar({ onCreate, onJoin }) {
               ))}
               <div className="flex gap-2 pt-2">
                 <button
-                  onClick={onCreate}
+                  onClick={onSignIn}
                   className="flex-1 px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium"
                 >
-                  Create Room
+                  Sign in
                 </button>
                 <button
                   onClick={onJoin}
@@ -851,8 +869,8 @@ function DiscoverSection({ onHeroBackdrop }) {
 
 function MovieCard({ movie, onClick }) {
   const poster = movie.poster_path ? `${POSTER_BASE}${movie.poster_path}` : null;
-  const year = movie.release_date ? movie.release_date.slice(0, 4) : "—";
-  const rating = movie.vote_average ? movie.vote_average.toFixed(1) : "—";
+  const year = movie.release_date ? movie.release_date.slice(0, 4) : "-";
+  const rating = movie.vote_average ? movie.vote_average.toFixed(1) : "-";
 
   return (
     <motion.button
@@ -883,6 +901,143 @@ function MovieCard({ movie, onClick }) {
         <div className="text-xs text-slate-400 mt-1">{year}</div>
       </div>
     </motion.button>
+  );
+}
+
+function AuthModal({ mode, onClose, onToggleMode }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const closeButtonRef = useRef(null);
+  const isSignIn = mode === "signin";
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  const handleSubmit = (event) => {
+    event.preventDefault();
+    console.log(isSignIn ? "Sign in" : "Register", {
+      email,
+      password,
+      confirmPassword,
+    });
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+          <div>
+            <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
+              GioStream
+            </div>
+            <h3 className="text-lg font-semibold">
+              {isSignIn ? "Sign in" : "Create your account"}
+            </h3>
+          </div>
+          <button
+            ref={closeButtonRef}
+            onClick={onClose}
+            className="px-3 py-1 rounded-full text-xs bg-slate-900 border border-slate-700"
+          >
+            Close
+          </button>
+        </div>
+        <form className="px-6 py-5 space-y-4" onSubmit={handleSubmit}>
+          <div className="space-y-2">
+            <label className="text-xs text-slate-400" htmlFor="landing-auth-email">
+              Email address
+            </label>
+            <input
+              id="landing-auth-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              placeholder="you@example.com"
+            />
+          </div>
+          <div className="space-y-2">
+            <label
+              className="text-xs text-slate-400"
+              htmlFor="landing-auth-password"
+            >
+              Password
+            </label>
+            <input
+              id="landing-auth-password"
+              type="password"
+              autoComplete={isSignIn ? "current-password" : "new-password"}
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              placeholder="••••••••"
+            />
+          </div>
+          {!isSignIn && (
+            <div className="space-y-2">
+              <label
+                className="text-xs text-slate-400"
+                htmlFor="landing-auth-confirm"
+              >
+                Confirm password
+              </label>
+              <input
+                id="landing-auth-confirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="••••••••"
+              />
+            </div>
+          )}
+          <button
+            type="submit"
+            className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+          >
+            {isSignIn ? "Sign in" : "Create account"}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleMode}
+            className="w-full text-xs text-slate-400 hover:text-slate-200 transition"
+          >
+            {isSignIn
+              ? "New here? Create an account"
+              : "Already have an account? Sign in"}
+          </button>
+        </form>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -1110,3 +1265,4 @@ function CheckIcon({ className = "" }) {
 }
 
 export default LandingPage;
+
