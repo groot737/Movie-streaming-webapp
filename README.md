@@ -41,7 +41,7 @@ VITE_TMDB_API_KEY=your_api_key_here
 ```bash
 npm run dev
 ```
-The app will open automatically at `http://localhost:3000`
+The app will open automatically at the dev server URL shown in the terminal.
 
 ### Production Build
 ```bash
@@ -107,8 +107,8 @@ This repo now includes an Express auth server with session-based Passport auth.
 ```env
 DATABASE_URL=postgres://user:password@host:5432/dbname
 SESSION_SECRET=replace_with_secure_value
-CLIENT_ORIGIN=http://localhost:5173
-VITE_API_URL=http://localhost:3001
+CLIENT_ORIGIN=https://your-frontend-domain
+VITE_API_URL=https://your-api-domain
 ```
 
 ### Database Setup

@@ -12,10 +12,13 @@ const app = express();
 const PgSession = connectPgSimple(session);
 const PORT = process.env.PORT || 3001;
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-secret-change-me";
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "";
+const corsOrigin = CLIENT_ORIGIN
+  ? CLIENT_ORIGIN.split(",").map((origin) => origin.trim()).filter(Boolean)
+  : true;
 
 app.set("trust proxy", 1);
-app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
+app.use(cors({ origin: corsOrigin, credentials: true }));
 app.use(express.json());
 
 app.use(
