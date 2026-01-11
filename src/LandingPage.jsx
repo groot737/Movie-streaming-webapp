@@ -24,6 +24,8 @@ const TMDB_BEARER_TOKEN =
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
 const TMDB_DEFAULT_HEADERS = {
   accept: "application/json",
 };
@@ -145,6 +147,7 @@ function LandingPage() {
   const [heroBackdrop, setHeroBackdrop] = useState("");
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
+  const [currentUser, setCurrentUser] = useState(null);
 
   useEffect(() => {
     const prev = document.documentElement.style.scrollBehavior;
@@ -152,6 +155,24 @@ function LandingPage() {
     return () => {
       document.documentElement.style.scrollBehavior = prev;
     };
+  }, []);
+
+  useEffect(() => {
+    const fetchSession = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        if (data?.user) {
+          setCurrentUser(data.user);
+        }
+      } catch (err) {
+        // Ignore session errors on load.
+      }
+    };
+    fetchSession();
   }, []);
 
   const handleCreateRoom = () => {
@@ -162,6 +183,18 @@ function LandingPage() {
     console.log("Join room");
   };
 
+  const handleSignOut = async () => {
+    setCurrentUser(null);
+    try {
+      await fetch(`${API_BASE}/api/auth/signout`, {
+        method: "POST",
+        credentials: "include",
+      });
+    } catch (err) {
+      // Ignore sign out errors so UI can reset.
+    }
+  };
+
   const handleOpenAuth = (mode = "signin") => {
     setAuthMode(mode);
     setShowAuthModal(true);
@@ -169,7 +202,12 @@ function LandingPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      <Navbar onSignIn={() => handleOpenAuth("signin")} onJoin={handleJoinRoom} />
+      <Navbar
+        onSignIn={() => handleOpenAuth("signin")}
+        onJoin={handleJoinRoom}
+        onSignOut={handleSignOut}
+        user={currentUser}
+      />
 
       <main className="relative">
         <section className="relative overflow-hidden">
@@ -503,6 +541,7 @@ function LandingPage() {
           <AuthModal
             mode={authMode}
             onClose={() => setShowAuthModal(false)}
+            onAuthSuccess={(user) => setCurrentUser(user)}
             onToggleMode={() =>
               setAuthMode((prev) => (prev === "signin" ? "register" : "signin"))
             }
@@ -513,7 +552,7 @@ function LandingPage() {
   );
 }
 
-function Navbar({ onSignIn, onJoin }) {
+function Navbar({ onSignIn, onJoin, onSignOut, user }) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -530,14 +569,28 @@ function Navbar({ onSignIn, onJoin }) {
               {link.label}
             </a>
           ))}
+          {user && (
+            <a href="#account" className="hover:text-slate-100 transition">
+              My account
+            </a>
+          )}
         </nav>
         <div className="hidden md:flex items-center gap-3">
-          <button
-            onClick={onSignIn}
-            className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
-          >
-            Sign in
-          </button>
+          {user ? (
+            <button
+              onClick={onSignOut}
+              className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+            >
+              Log out
+            </button>
+          ) : (
+            <button
+              onClick={onSignIn}
+              className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+            >
+              Sign in
+            </button>
+          )}
           <button
             onClick={onJoin}
             className="px-4 py-2 rounded-lg border border-slate-700 hover:border-slate-500 transition"
@@ -574,16 +627,34 @@ function Navbar({ onSignIn, onJoin }) {
                   {link.label}
                 </a>
               ))}
-              <div className="flex gap-2 pt-2">
-                <button
-                  onClick={onSignIn}
-                  className="flex-1 px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium"
+              {user && (
+                <a
+                  href="#account"
+                  className="block text-sm text-slate-300"
+                  onClick={() => setOpen(false)}
                 >
-                  Sign in
-                </button>
+                  My account
+                </a>
+              )} 
+              <div className="flex flex-col gap-2 pt-2">
+                {user ? (
+                  <button
+                    onClick={onSignOut}
+                    className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium"
+                  >
+                    Log out
+                  </button>
+                ) : (
+                  <button
+                    onClick={onSignIn}
+                    className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium"
+                  >
+                    Sign in
+                  </button>
+                )}
                 <button
                   onClick={onJoin}
-                  className="flex-1 px-4 py-2 rounded-lg border border-slate-700"
+                  className="px-4 py-2 rounded-lg border border-slate-700"
                 >
                   Join Room
                 </button>
@@ -904,10 +975,13 @@ function MovieCard({ movie, onClick }) {
   );
 }
 
-function AuthModal({ mode, onClose, onToggleMode }) {
+function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
+  const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const closeButtonRef = useRef(null);
   const isSignIn = mode === "signin";
 
@@ -922,13 +996,77 @@ function AuthModal({ mode, onClose, onToggleMode }) {
     };
   }, [onClose]);
 
-  const handleSubmit = (event) => {
+  useEffect(() => {
+    setFormError("");
+    setUsername("");
+    setPassword("");
+    setConfirmPassword("");
+    setIsSubmitting(false);
+  }, [mode]);
+
+  const handleSubmit = async (event) => {
     event.preventDefault();
-    console.log(isSignIn ? "Sign in" : "Register", {
-      email,
-      password,
-      confirmPassword,
-    });
+    const trimmedEmail = email.trim();
+    const trimmedUsername = username.trim();
+    const passwordHasLetter = /[A-Za-z]/.test(password);
+    const passwordHasNumber = /[0-9]/.test(password);
+    const passwordStrong = password.length >= 8 && passwordHasLetter && passwordHasNumber;
+
+    if (!isSignIn && !trimmedUsername) {
+      setFormError("Username is required.");
+      return;
+    }
+    if (!isSignIn && trimmedUsername.length < 3) {
+      setFormError("Username must be at least 3 characters.");
+      return;
+    }
+    if (!isSignIn && trimmedUsername.length > 32) {
+      setFormError("Username must be 32 characters or less.");
+      return;
+    }
+    if (!trimmedEmail) {
+      setFormError("Email is required.");
+      return;
+    }
+    if (!password) {
+      setFormError("Password is required.");
+      return;
+    }
+    if (!isSignIn && !passwordStrong) {
+      setFormError("Password must be at least 8 characters and include a letter and a number.");
+      return;
+    }
+    if (!isSignIn && password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+    setFormError("");
+    setIsSubmitting(true);
+    try {
+      const endpoint = isSignIn ? "/api/auth/signin" : "/api/auth/signup";
+      const body = isSignIn
+        ? { email: trimmedEmail, password }
+        : { email: trimmedEmail, username: trimmedUsername, password, confirmPassword };
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setFormError(data?.message || "Unable to authenticate. Please try again.");
+        return;
+      }
+      if (data?.user) {
+        onAuthSuccess?.(data.user);
+      }
+      onClose();
+    } catch (err) {
+      setFormError("Network error. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -967,6 +1105,31 @@ function AuthModal({ mode, onClose, onToggleMode }) {
           </button>
         </div>
         <form className="px-6 py-5 space-y-4" onSubmit={handleSubmit}>
+          {formError && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {formError}
+            </div>
+          )}
+          {!isSignIn && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400" htmlFor="landing-auth-username">
+                Username
+              </label>
+              <input
+                id="landing-auth-username"
+                type="text"
+                autoComplete="username"
+                required
+                value={username}
+                onChange={(event) => {
+                  setUsername(event.target.value);
+                  setFormError("");
+                }}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="yourname"
+              />
+            </div>
+          )}
           <div className="space-y-2">
             <label className="text-xs text-slate-400" htmlFor="landing-auth-email">
               Email address
@@ -977,7 +1140,10 @@ function AuthModal({ mode, onClose, onToggleMode }) {
               autoComplete="email"
               required
               value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setFormError("");
+              }}
               className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               placeholder="you@example.com"
             />
@@ -995,7 +1161,10 @@ function AuthModal({ mode, onClose, onToggleMode }) {
               autoComplete={isSignIn ? "current-password" : "new-password"}
               required
               value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setFormError("");
+              }}
               className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               placeholder="••••••••"
             />
@@ -1014,17 +1183,32 @@ function AuthModal({ mode, onClose, onToggleMode }) {
                 autoComplete="new-password"
                 required
                 value={confirmPassword}
-                onChange={(event) => setConfirmPassword(event.target.value)}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value);
+                  setFormError("");
+                }}
                 className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                 placeholder="••••••••"
               />
             </div>
           )}
+          {!isSignIn && (
+            <div className="text-xs text-slate-500">
+              Password must be 8+ characters and include a letter and a number.
+            </div>
+          )}
           <button
             type="submit"
+            disabled={isSubmitting}
             className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
           >
-            {isSignIn ? "Sign in" : "Create account"}
+            {isSubmitting
+              ? isSignIn
+                ? "Signing in..."
+                : "Creating account..."
+              : isSignIn
+              ? "Sign in"
+              : "Create account"}
           </button>
           <button
             type="button"

@@ -97,3 +97,27 @@ This is a personal project, but feel free to fork and modify as needed.
 ## 📄 License
 
 Private project for personal use.
+
+## Auth Server (Passport + Postgres)
+
+This repo now includes an Express auth server with session-based Passport auth.
+
+### Server Environment Variables
+
+```env
+DATABASE_URL=postgres://user:password@host:5432/dbname
+SESSION_SECRET=replace_with_secure_value
+CLIENT_ORIGIN=http://localhost:5173
+VITE_API_URL=http://localhost:3001
+```
+
+### Database Setup
+
+Run the schema in `server/schema.sql` to create the `users` table. Sessions are stored
+in Postgres via `connect-pg-simple` (table auto-creates on first run).
+
+### Run Auth Server
+
+```bash
+npm run server
+```
