@@ -83,6 +83,13 @@ const buildCorsOrigin = () => {
   return origins.length === 1 ? origins[0] : origins;
 };
 
+const requireAuth = (req, res, next) => {
+  if (!req.isAuthenticated()) {
+    return res.status(401).json({ message: "Not authenticated." });
+  }
+  return next();
+};
+
 export const getAuthApp = () => {
   if (cachedApp) {
     return cachedApp;
@@ -223,6 +230,106 @@ export const getAuthApp = () => {
       return res.status(401).json({ message: "Not authenticated." });
     }
     return res.json({ user: req.user });
+  });
+
+  app.get("/api/lists", requireAuth, async (req, res, next) => {
+    try {
+      const listsResult = await pool.query(
+        "SELECT id, name FROM lists WHERE user_id = $1 ORDER BY created_at DESC",
+        [req.user.id]
+      );
+      const lists = listsResult.rows;
+      if (!lists.length) {
+        return res.json({ lists: [] });
+      }
+      const listIds = lists.map((list) => list.id);
+      const itemsResult = await pool.query(
+        `SELECT list_id, tmdb_id, media_type, title, poster_path, release_date
+         FROM list_items
+         WHERE list_id = ANY($1)
+         ORDER BY created_at DESC`,
+        [listIds]
+      );
+      const itemsByList = new Map();
+      itemsResult.rows.forEach((row) => {
+        if (!itemsByList.has(row.list_id)) {
+          itemsByList.set(row.list_id, []);
+        }
+        itemsByList.get(row.list_id).push({
+          id: row.tmdb_id,
+          mediaType: row.media_type,
+          title: row.title,
+          poster_path: row.poster_path,
+          release_date: row.release_date,
+        });
+      });
+      const payload = lists.map((list) => ({
+        id: list.id,
+        name: list.name,
+        movies: itemsByList.get(list.id) || [],
+      }));
+      return res.json({ lists: payload });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/lists", requireAuth, async (req, res, next) => {
+    const name = (req.body?.name || "").trim();
+    if (!name) {
+      return res.status(400).json({ message: "List name is required." });
+    }
+    try {
+      const result = await pool.query(
+        "INSERT INTO lists (user_id, name) VALUES ($1, $2) RETURNING id, name",
+        [req.user.id, name]
+      );
+      return res.status(201).json({ list: result.rows[0] });
+    } catch (err) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "List already exists." });
+      }
+      return next(err);
+    }
+  });
+
+  app.post("/api/lists/:listId/items", requireAuth, async (req, res, next) => {
+    const listId = Number(req.params.listId);
+    if (!Number.isFinite(listId)) {
+      return res.status(400).json({ message: "Invalid list id." });
+    }
+    const tmdbId = Number(req.body?.tmdbId);
+    const mediaType = req.body?.mediaType === "tv" ? "tv" : "movie";
+    if (!Number.isFinite(tmdbId)) {
+      return res.status(400).json({ message: "Invalid movie id." });
+    }
+    try {
+      const listResult = await pool.query(
+        "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+        [listId, req.user.id]
+      );
+      if (!listResult.rows.length) {
+        return res.status(404).json({ message: "List not found." });
+      }
+      const itemTitle = req.body?.title || req.body?.name || null;
+      await pool.query(
+        `INSERT INTO list_items
+         (list_id, tmdb_id, media_type, title, poster_path, release_date)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT DO NOTHING`,
+        [
+          listId,
+          tmdbId,
+          mediaType,
+          itemTitle,
+          req.body?.posterPath || null,
+          req.body?.releaseDate || null,
+        ]
+      );
+      return res.status(201).json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
   });
 
   app.use((err, req, res, next) => {

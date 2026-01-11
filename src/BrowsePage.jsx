@@ -1,5 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
+import { addMovieToList, createList, getLists } from "./listStorage.js";
 
 /*
   Local dev:
@@ -723,7 +724,12 @@ function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, user }) {
             </a>
           ))}
           {user && (
-            <span className="text-slate-100">My account</span>
+            <a
+              href="#account"
+              className="text-slate-100 hover:text-slate-300 transition"
+            >
+              My account
+            </a>
           )}
         </nav>
         <div className="flex items-center gap-3">
@@ -804,7 +810,15 @@ function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, user }) {
                   {link.label}
                 </a>
               ))}
-              {user && <div className="text-sm text-slate-300">My account</div>}
+              {user && (
+                <a
+                  href="#account"
+                  className="block text-sm text-slate-300"
+                  onClick={() => setOpen(false)}
+                >
+                  My account
+                </a>
+              )}
               {user ? (
                 <button
                   onClick={onSignOut}
@@ -1246,6 +1260,11 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
 
 function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
   const closeButtonRef = useRef(null);
+  const [lists, setLists] = useState([]);
+  const [selectedListId, setSelectedListId] = useState("");
+  const [listName, setListName] = useState("");
+  const [listFeedback, setListFeedback] = useState("");
+  const [listError, setListError] = useState("");
 
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && onClose();
@@ -1257,6 +1276,28 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
       document.body.style.overflow = "";
     };
   }, [onClose]);
+
+  useEffect(() => {
+    let active = true;
+    const loadLists = async () => {
+      const result = await getLists();
+      if (!active) return;
+      if (result?.error) {
+        setListError(result.error);
+        setLists([]);
+        return;
+      }
+      const storedLists = result.lists || [];
+      setLists(storedLists);
+      if (storedLists.length && !selectedListId) {
+        setSelectedListId(storedLists[0].id);
+      }
+    };
+    loadLists();
+    return () => {
+      active = false;
+    };
+  }, [movie.id, selectedListId]);
 
   const backdrop = movie.backdrop_path
     ? `${BACKDROP_BASE}${movie.backdrop_path}`
@@ -1287,6 +1328,50 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
   const handleWatch = () => {
     const type = mediaType === "tv" ? "tv" : "movie";
     window.location.hash = `#watch?id=${movie.id}&type=${type}`;
+  };
+
+  const handleCreateList = async () => {
+    setListError("");
+    setListFeedback("");
+    const result = await createList(listName);
+    if (result?.error) {
+      setListError(result.error);
+      return;
+    }
+    const refresh = await getLists();
+    if (refresh?.error) {
+      setListError(refresh.error);
+      return;
+    }
+    const storedLists = refresh.lists || [];
+    setLists(storedLists);
+    setSelectedListId(result.list?.id || storedLists[0]?.id || "");
+    setListName("");
+    setListFeedback("List created.");
+  };
+
+  const handleAddToList = async () => {
+    if (!selectedListId) {
+      setListError("Select a list first.");
+      setListFeedback("");
+      return;
+    }
+    setListError("");
+    setListFeedback("");
+    const result = await addMovieToList(selectedListId, { ...movie, mediaType });
+    if (result?.error) {
+      setListError(result.error);
+      setListFeedback("");
+      return;
+    }
+    const refresh = await getLists();
+    if (refresh?.error) {
+      setListError(refresh.error);
+      return;
+    }
+    setLists(refresh.lists || []);
+    setListError("");
+    setListFeedback("Added to your list.");
   };
 
   return (
@@ -1338,6 +1423,71 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
               {details?.overview || movie.overview || "No overview available."}
             </p>
           )}
+          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold">My lists</div>
+                <div className="text-xs text-slate-400 mt-1">
+                  Add this title to a list or create a new one.
+                </div>
+              </div>
+            </div>
+            <div className="mt-4 flex flex-col sm:flex-row gap-3">
+              <select
+                value={selectedListId}
+                onChange={(event) => {
+                  setSelectedListId(event.target.value);
+                  setListError("");
+                  setListFeedback("");
+                }}
+                className="flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              >
+                {lists.length === 0 && (
+                  <option value="">No lists yet</option>
+                )}
+                {lists.map((list) => (
+                  <option key={list.id} value={list.id}>
+                    {list.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={handleAddToList}
+                className="px-4 py-2 rounded-lg border border-slate-700 text-slate-200 hover:border-slate-500 transition"
+              >
+                Add to list
+              </button>
+            </div>
+            <div className="mt-4 flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                value={listName}
+                onChange={(event) => {
+                  setListName(event.target.value);
+                  setListError("");
+                  setListFeedback("");
+                }}
+                placeholder="New list name"
+                className="flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              />
+              <button
+                type="button"
+                onClick={handleCreateList}
+                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+              >
+                Create list
+              </button>
+            </div>
+            {listError && (
+              <div className="mt-3 text-xs text-rose-300">{listError}</div>
+            )}
+            {listFeedback && (
+              <div className="mt-3 text-xs text-emerald-300">
+                {listFeedback}
+              </div>
+            )}
+          </div>
           <div className="flex flex-wrap gap-3">
             <button
               onClick={handleWatch}
@@ -1467,4 +1617,3 @@ function ArrowRightIcon() {
 }
 
 export default BrowsePage;
-

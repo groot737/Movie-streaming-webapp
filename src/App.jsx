@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import BrowsePage from "./BrowsePage.jsx";
+import AccountPage from "./AccountPage.jsx";
 import WatchPage from "./WatchPage.jsx";
 
 const parseHash = () => {
@@ -14,6 +15,12 @@ const parseHash = () => {
       mediaId: Number(id) || 550,
       mediaType: type === "tv" ? "tv" : "movie",
     };
+  }
+  if (hash.startsWith("#account")) {
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    const params = new URLSearchParams(query);
+    const tab = params.get("tab") || "rooms";
+    return { page: "account", tab };
   }
   return { page: "browse" };
 };
@@ -31,6 +38,10 @@ function App() {
     return (
       <WatchPage mediaId={route.mediaId} mediaType={route.mediaType} />
     );
+  }
+
+  if (route.page === "account") {
+    return <AccountPage initialTab={route.tab} />;
   }
 
   return <BrowsePage />;
