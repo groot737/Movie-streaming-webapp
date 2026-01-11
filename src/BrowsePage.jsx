@@ -1035,7 +1035,7 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
     const passwordStrong = password.length >= 8 && passwordHasLetter && passwordHasNumber;
 
     if (!isSignIn && !trimmedUsername) {
-      setFormError("Username is required.");
+      setFormError("Username is required!");
       return;
     }
     if (!isSignIn && trimmedUsername.length < 3) {
