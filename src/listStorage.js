@@ -59,3 +59,23 @@ export const addMovieToList = async (listId, movie) => {
   }
   return { ok: true };
 };
+
+export const removeMovieFromList = async (listId, tmdbId) => {
+  const data = await requestJson(`/api/lists/${listId}/items/${tmdbId}`, {
+    method: "DELETE",
+  });
+  if (data?.error) {
+    return { error: data.error };
+  }
+  return { ok: true };
+};
+
+export const deleteList = async (listId) => {
+  const data = await requestJson(`/api/lists/${listId}`, {
+    method: "DELETE",
+  });
+  if (data?.error) {
+    return { error: data.error };
+  }
+  return { ok: true };
+};

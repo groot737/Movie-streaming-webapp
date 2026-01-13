@@ -1,11 +1,58 @@
 import React, { useEffect, useState } from "react";
-import { createList, getLists } from "./listStorage.js";
+import { AnimatePresence } from "framer-motion";
+import { MovieModal } from "./BrowsePage.jsx";
+import {
+  createList,
+  deleteList,
+  getLists,
+  removeMovieFromList,
+} from "./listStorage.js";
+
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
 
 const TAB_LABELS = [
   { id: "rooms", label: "Your rooms" },
   { id: "lists", label: "My lists" },
   { id: "settings", label: "Settings" },
 ];
+
+const TMDB_API_KEY =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_TMDB_API_KEY) ||
+  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_TMDB_API_KEY) ||
+  "";
+
+const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+
+const buildTmdbUrl = (path, params = {}) => {
+  const url = new URL(`${TMDB_BASE_URL}${path}`);
+  const searchParams = new URLSearchParams(params);
+  searchParams.set("api_key", TMDB_API_KEY);
+  url.search = searchParams.toString();
+  return url.toString();
+};
+
+const fetchTmdbJson = async (url, signal) => {
+  const res = await fetch(url, { signal });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message =
+      data?.status_message || `TMDB request failed (${res.status}).`;
+    throw new Error(message);
+  }
+  return data;
+};
+
+const tmdbClient = {
+  getMovieDetails: async (movieId, signal) => {
+    const url = buildTmdbUrl(`/movie/${movieId}`);
+    return fetchTmdbJson(url, signal);
+  },
+  getSeriesDetails: async (seriesId, signal) => {
+    const url = buildTmdbUrl(`/tv/${seriesId}`);
+    return fetchTmdbJson(url, signal);
+  },
+};
 
 function AccountPage({ initialTab = "rooms" }) {
   const normalizeTab = (value) =>
@@ -16,6 +63,16 @@ function AccountPage({ initialTab = "rooms" }) {
   const [listError, setListError] = useState("");
   const [listMessage, setListMessage] = useState("");
   const [activeListId, setActiveListId] = useState("");
+  const [selectedMedia, setSelectedMedia] = useState(null);
+  const [selectedMediaType, setSelectedMediaType] = useState("movie");
+  const [details, setDetails] = useState(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [detailsError, setDetailsError] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [profileMessage, setProfileMessage] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordMessage, setPasswordMessage] = useState("");
+  const [deleteError, setDeleteError] = useState("");
   const [username, setUsername] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -38,10 +95,7 @@ function AccountPage({ initialTab = "rooms" }) {
         return;
       }
       const storedLists = result.lists || [];
-      setLists(storedLists);
-      if (storedLists.length && !activeListId) {
-        setActiveListId(storedLists[0].id);
-      }
+      syncLists(storedLists);
     };
     loadLists();
     return () => {
@@ -49,12 +103,133 @@ function AccountPage({ initialTab = "rooms" }) {
     };
   }, [activeTab]);
 
+  useEffect(() => {
+    if (activeTab !== "settings") return;
+    let active = true;
+    const loadUser = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        if (!active) return;
+        if (data?.user?.username) {
+          setUsername(data.user.username);
+        }
+      } catch (err) {
+        // Ignore profile load errors.
+      }
+    };
+    loadUser();
+    return () => {
+      active = false;
+    };
+  }, [activeTab]);
+
+  const syncLists = (storedLists, preferredId = activeListId) => {
+    setLists(storedLists);
+    if (!storedLists.length) {
+      setActiveListId("");
+      return;
+    }
+    const match = storedLists.find((list) => list.id === preferredId);
+    setActiveListId(match ? match.id : storedLists[0].id);
+  };
+
   const handleProfileSubmit = (event) => {
     event.preventDefault();
+    const trimmed = username.trim();
+    setProfileError("");
+    setProfileMessage("");
+    if (!trimmed) {
+      setProfileError("Username is required.");
+      return;
+    }
+    if (trimmed.length < 3) {
+      setProfileError("Username must be at least 3 characters.");
+      return;
+    }
+    if (trimmed.length > 32) {
+      setProfileError("Username must be 32 characters or less.");
+      return;
+    }
+    const run = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/account/username`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ username: trimmed }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setProfileError(data?.message || "Unable to update username.");
+          return;
+        }
+        setUsername(data?.user?.username || trimmed);
+        setProfileMessage("Username updated.");
+      } catch (err) {
+        setProfileError("Network error. Please try again.");
+      }
+    };
+    run();
   };
 
   const handlePasswordSubmit = (event) => {
     event.preventDefault();
+    setPasswordError("");
+    setPasswordMessage("");
+    const passwordHasLetter = /[A-Za-z]/.test(newPassword);
+    const passwordHasNumber = /[0-9]/.test(newPassword);
+    const passwordStrong =
+      newPassword.length >= 8 && passwordHasLetter && passwordHasNumber;
+
+    if (!currentPassword) {
+      setPasswordError("Current password is required.");
+      return;
+    }
+    if (!newPassword) {
+      setPasswordError("New password is required.");
+      return;
+    }
+    if (!passwordStrong) {
+      setPasswordError(
+        "Password must be at least 8 characters and include a letter and a number."
+      );
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("Passwords do not match.");
+      return;
+    }
+
+    const run = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/account/password`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({
+            currentPassword,
+            newPassword,
+            confirmPassword,
+          }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setPasswordError(data?.message || "Unable to update password.");
+          return;
+        }
+        setCurrentPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+        setPasswordMessage("Password updated.");
+      } catch (err) {
+        setPasswordError("Network error. Please try again.");
+      }
+    };
+    run();
   };
 
   const handleCreateList = async (event) => {
@@ -72,14 +247,104 @@ function AccountPage({ initialTab = "rooms" }) {
       return;
     }
     const storedLists = refresh.lists || [];
-    setLists(storedLists);
-    if (result.list?.id) {
-      setActiveListId(result.list.id);
-    } else if (storedLists.length && !activeListId) {
-      setActiveListId(storedLists[0].id);
-    }
+    syncLists(storedLists, result.list?.id);
     setListName("");
     setListMessage("List created.");
+  };
+
+  const handleDeleteList = async (listId) => {
+    if (!listId) return;
+    const confirmed = window.confirm(
+      "Delete this list and all its movies? This cannot be undone."
+    );
+    if (!confirmed) return;
+    setListError("");
+    setListMessage("");
+    const result = await deleteList(listId);
+    if (result?.error) {
+      setListError(result.error);
+      return;
+    }
+    const refresh = await getLists();
+    if (refresh?.error) {
+      setListError(refresh.error);
+      return;
+    }
+    syncLists(refresh.lists || [], "");
+    setListMessage("List deleted.");
+  };
+
+  const handleRemoveMovie = async (listId, tmdbId) => {
+    if (!listId || !tmdbId) return;
+    setListError("");
+    setListMessage("");
+    const result = await removeMovieFromList(listId, tmdbId);
+    if (result?.error) {
+      setListError(result.error);
+      return;
+    }
+    const refresh = await getLists();
+    if (refresh?.error) {
+      setListError(refresh.error);
+      return;
+    }
+    syncLists(refresh.lists || [], listId);
+    setListMessage("Removed from list.");
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirmed = window.confirm(
+      "Delete your account and all lists? This cannot be undone."
+    );
+    if (!confirmed) return;
+    setDeleteError("");
+    setProfileMessage("");
+    setPasswordMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/api/account`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setDeleteError(data?.message || "Unable to delete account.");
+        return;
+      }
+      window.location.hash = "#";
+      window.location.reload();
+    } catch (err) {
+      setDeleteError("Network error. Please try again.");
+    }
+  };
+
+  const handleOpenMedia = async (media, type) => {
+    setSelectedMedia(media);
+    setSelectedMediaType(type);
+    setDetails(null);
+    setDetailsError("");
+    if (!TMDB_API_KEY) {
+      setDetailsError("Missing TMDB API key.");
+      return;
+    }
+    setDetailsLoading(true);
+    try {
+      const controller = new AbortController();
+      const data =
+        type === "tv"
+          ? await tmdbClient.getSeriesDetails(media.id, controller.signal)
+          : await tmdbClient.getMovieDetails(media.id, controller.signal);
+      setDetails(data);
+    } catch (err) {
+      setDetailsError(err.message || "Unable to load details.");
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  const handleCloseMovie = () => {
+    setSelectedMedia(null);
+    setDetails(null);
+    setDetailsError("");
   };
 
   return (
@@ -227,6 +492,13 @@ function AccountPage({ initialTab = "rooms" }) {
                               {activeList.movies?.length || 0} movies
                             </p>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteList(activeList.id)}
+                            className="px-3 py-1.5 rounded-lg border border-rose-500/50 text-xs text-rose-100 hover:bg-rose-500/10 transition"
+                          >
+                            Delete list
+                          </button>
                         </div>
                         {activeList.movies?.length ? (
                           <div className="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
@@ -235,9 +507,25 @@ function AccountPage({ initialTab = "rooms" }) {
                                 key={`${movie.mediaType || "movie"}-${
                                   movie.id
                                 }`}
-                                className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden"
+                                className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden cursor-pointer group"
+                                role="button"
+                                tabIndex={0}
+                                onClick={() =>
+                                  handleOpenMedia(
+                                    movie,
+                                    movie.mediaType || "movie"
+                                  )
+                                }
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    handleOpenMedia(
+                                      movie,
+                                      movie.mediaType || "movie"
+                                    );
+                                  }
+                                }}
                               >
-                                <div className="aspect-[2/3] bg-slate-800">
+                                <div className="relative aspect-[2/3] bg-slate-800">
                                   {movie.poster_path ? (
                                     <img
                                       src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
@@ -250,6 +538,16 @@ function AccountPage({ initialTab = "rooms" }) {
                                       No poster
                                     </div>
                                   )}
+                                  <button
+                                    type="button"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleRemoveMovie(activeList.id, movie.id);
+                                    }}
+                                    className="absolute top-2 right-2 rounded-full bg-slate-950/80 border border-slate-700 px-2 py-1 text-[10px] text-slate-200 opacity-0 group-hover:opacity-100 transition"
+                                  >
+                                    Remove
+                                  </button>
                                 </div>
                                 <div className="p-3">
                                   <div className="text-sm font-semibold text-slate-100 line-clamp-1">
@@ -313,6 +611,14 @@ function AccountPage({ initialTab = "rooms" }) {
                   >
                     Save username
                   </button>
+                  {profileError && (
+                    <div className="text-xs text-rose-300">{profileError}</div>
+                  )}
+                  {profileMessage && (
+                    <div className="text-xs text-emerald-300">
+                      {profileMessage}
+                    </div>
+                  )}
                 </form>
               </section>
 
@@ -336,7 +642,7 @@ function AccountPage({ initialTab = "rooms" }) {
                       type="password"
                       value={currentPassword}
                       onChange={(event) => setCurrentPassword(event.target.value)}
-                      placeholder="••••••••"
+                      placeholder="********"
                       className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                     />
                   </div>
@@ -352,7 +658,7 @@ function AccountPage({ initialTab = "rooms" }) {
                       type="password"
                       value={newPassword}
                       onChange={(event) => setNewPassword(event.target.value)}
-                      placeholder="••••••••"
+                      placeholder="********"
                       className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                     />
                   </div>
@@ -370,7 +676,7 @@ function AccountPage({ initialTab = "rooms" }) {
                       onChange={(event) =>
                         setConfirmPassword(event.target.value)
                       }
-                      placeholder="••••••••"
+                      placeholder="********"
                       className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                     />
                   </div>
@@ -380,6 +686,14 @@ function AccountPage({ initialTab = "rooms" }) {
                   >
                     Update password
                   </button>
+                  {passwordError && (
+                    <div className="text-xs text-rose-300">{passwordError}</div>
+                  )}
+                  {passwordMessage && (
+                    <div className="text-xs text-emerald-300">
+                      {passwordMessage}
+                    </div>
+                  )}
                 </form>
               </section>
 
@@ -393,15 +707,35 @@ function AccountPage({ initialTab = "rooms" }) {
                 </div>
                 <button
                   type="button"
+                  onClick={handleDeleteAccount}
                   className="mt-4 px-4 py-2 rounded-lg border border-rose-400 text-rose-100 hover:bg-rose-500/20 transition"
                 >
                   Delete account
                 </button>
+                {deleteError && (
+                  <div className="mt-3 text-xs text-rose-200">
+                    {deleteError}
+                  </div>
+                )}
               </section>
             </div>
           )}
         </div>
       </main>
+
+      <AnimatePresence>
+        {selectedMedia && (
+          <MovieModal
+            movie={selectedMedia}
+            mediaType={selectedMediaType}
+            details={details}
+            loading={detailsLoading}
+            error={detailsError}
+            onClose={handleCloseMovie}
+            canManageLists
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }

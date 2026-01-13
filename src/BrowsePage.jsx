@@ -1,6 +1,6 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { addMovieToList, createList, getLists } from "./listStorage.js";
+import { addMovieToList, getLists } from "./listStorage.js";
 
 /*
   Local dev:
@@ -686,6 +686,7 @@ function BrowsePage() {
             loading={detailsLoading}
             error={detailsError}
             onClose={handleCloseMovie}
+            canManageLists={Boolean(currentUser)}
           />
         )}
       </AnimatePresence>
@@ -1258,11 +1259,18 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
   );
 }
 
-function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
+export function MovieModal({
+  movie,
+  mediaType,
+  details,
+  loading,
+  error,
+  onClose,
+  canManageLists = true,
+}) {
   const closeButtonRef = useRef(null);
   const [lists, setLists] = useState([]);
   const [selectedListId, setSelectedListId] = useState("");
-  const [listName, setListName] = useState("");
   const [listFeedback, setListFeedback] = useState("");
   const [listError, setListError] = useState("");
 
@@ -1278,6 +1286,7 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
   }, [onClose]);
 
   useEffect(() => {
+    if (!canManageLists) return;
     let active = true;
     const loadLists = async () => {
       const result = await getLists();
@@ -1297,11 +1306,10 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
     return () => {
       active = false;
     };
-  }, [movie.id, selectedListId]);
+  }, [movie.id, selectedListId, canManageLists]);
 
-  const backdrop = movie.backdrop_path
-    ? `${BACKDROP_BASE}${movie.backdrop_path}`
-    : null;
+  const backdropPath = details?.backdrop_path || movie.backdrop_path;
+  const backdrop = backdropPath ? `${BACKDROP_BASE}${backdropPath}` : null;
 
   const title = movie.title || movie.name || "Untitled";
   const runtimeValue =
@@ -1328,26 +1336,6 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
   const handleWatch = () => {
     const type = mediaType === "tv" ? "tv" : "movie";
     window.location.hash = `#watch?id=${movie.id}&type=${type}`;
-  };
-
-  const handleCreateList = async () => {
-    setListError("");
-    setListFeedback("");
-    const result = await createList(listName);
-    if (result?.error) {
-      setListError(result.error);
-      return;
-    }
-    const refresh = await getLists();
-    if (refresh?.error) {
-      setListError(refresh.error);
-      return;
-    }
-    const storedLists = refresh.lists || [];
-    setLists(storedLists);
-    setSelectedListId(result.list?.id || storedLists[0]?.id || "");
-    setListName("");
-    setListFeedback("List created.");
   };
 
   const handleAddToList = async () => {
@@ -1423,71 +1411,57 @@ function MovieModal({ movie, mediaType, details, loading, error, onClose }) {
               {details?.overview || movie.overview || "No overview available."}
             </p>
           )}
-          <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold">My lists</div>
-                <div className="text-xs text-slate-400 mt-1">
-                  Add this title to a list or create a new one.
+          {canManageLists && (
+            <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold tracking-wide uppercase text-slate-200">
+                    My lists
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Add this title to a list.
+                  </div>
                 </div>
               </div>
-            </div>
-            <div className="mt-4 flex flex-col sm:flex-row gap-3">
-              <select
-                value={selectedListId}
-                onChange={(event) => {
-                  setSelectedListId(event.target.value);
-                  setListError("");
-                  setListFeedback("");
-                }}
-                className="flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-              >
-                {lists.length === 0 && (
-                  <option value="">No lists yet</option>
-                )}
-                {lists.map((list) => (
-                  <option key={list.id} value={list.id}>
-                    {list.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                onClick={handleAddToList}
-                className="px-4 py-2 rounded-lg border border-slate-700 text-slate-200 hover:border-slate-500 transition"
-              >
-                Add to list
-              </button>
-            </div>
-            <div className="mt-4 flex flex-col sm:flex-row gap-3">
-              <input
-                type="text"
-                value={listName}
-                onChange={(event) => {
-                  setListName(event.target.value);
-                  setListError("");
-                  setListFeedback("");
-                }}
-                placeholder="New list name"
-                className="flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-              />
-              <button
-                type="button"
-                onClick={handleCreateList}
-                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
-              >
-                Create list
-              </button>
-            </div>
-            {listError && (
-              <div className="mt-3 text-xs text-rose-300">{listError}</div>
-            )}
-            {listFeedback && (
-              <div className="mt-3 text-xs text-emerald-300">
-                {listFeedback}
+              <div className="mt-3 flex flex-col sm:flex-row gap-3">
+                <select
+                  value={selectedListId}
+                  onChange={(event) => {
+                    setSelectedListId(event.target.value);
+                    setListError("");
+                    setListFeedback("");
+                  }}
+                  className="flex-1 rounded-lg border border-slate-800 bg-slate-900/80 px-3 py-1.5 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                >
+                  {lists.length === 0 && (
+                    <option value="">No lists yet</option>
+                  )}
+                  {lists.map((list) => (
+                    <option key={list.id} value={list.id}>
+                      {list.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleAddToList}
+                  className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition"
+                >
+                  Add to list
+                </button>
               </div>
-            )}
-          </div>
+              {listError && (
+                <div className="mt-2 text-[11px] text-rose-300">
+                  {listError}
+                </div>
+              )}
+              {listFeedback && (
+                <div className="mt-2 text-[11px] text-emerald-300">
+                  {listFeedback}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex flex-wrap gap-3">
             <button
               onClick={handleWatch}

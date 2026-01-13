@@ -232,6 +232,109 @@ export const getAuthApp = () => {
     return res.json({ user: req.user });
   });
 
+  app.patch("/api/account/username", requireAuth, async (req, res, next) => {
+    const normalizedUsername = (req.body?.username || "").trim();
+    if (!normalizedUsername) {
+      return res.status(400).json({ message: "Username is required." });
+    }
+    if (normalizedUsername.length < 3) {
+      return res
+        .status(400)
+        .json({ message: "Username must be at least 3 characters." });
+    }
+    if (normalizedUsername.length > 32) {
+      return res
+        .status(400)
+        .json({ message: "Username must be 32 characters or less." });
+    }
+    try {
+      const existingUsername = await pool.query(
+        "SELECT id FROM users WHERE username = $1 AND id <> $2",
+        [normalizedUsername, req.user.id]
+      );
+      if (existingUsername.rows.length) {
+        return res.status(409).json({ message: "Username is already taken." });
+      }
+      const result = await pool.query(
+        "UPDATE users SET username = $1 WHERE id = $2 RETURNING id, email, username",
+        [normalizedUsername, req.user.id]
+      );
+      return res.json({ user: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.patch("/api/account/password", requireAuth, async (req, res, next) => {
+    const currentPassword = req.body?.currentPassword || "";
+    const newPassword = req.body?.newPassword || "";
+    const confirmPassword = req.body?.confirmPassword || "";
+    if (!currentPassword) {
+      return res.status(400).json({ message: "Current password is required." });
+    }
+    if (!newPassword) {
+      return res.status(400).json({ message: "New password is required." });
+    }
+    if (!passwordMeetsPolicy(newPassword)) {
+      return res.status(400).json({
+        message:
+          "Password must be at least 8 characters and include a letter and a number.",
+      });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match." });
+    }
+    try {
+      const result = await pool.query(
+        "SELECT password_hash FROM users WHERE id = $1",
+        [req.user.id]
+      );
+      const user = result.rows[0];
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+      const isValid = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isValid) {
+        return res.status(401).json({ message: "Current password is incorrect." });
+      }
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
+        passwordHash,
+        req.user.id,
+      ]);
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.delete("/api/account", requireAuth, async (req, res, next) => {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        "DELETE FROM list_items WHERE list_id IN (SELECT id FROM lists WHERE user_id = $1)",
+        [req.user.id]
+      );
+      await client.query("DELETE FROM lists WHERE user_id = $1", [req.user.id]);
+      await client.query("DELETE FROM users WHERE id = $1", [req.user.id]);
+      await client.query("COMMIT");
+      req.logout((err) => {
+        if (err) {
+          return next(err);
+        }
+        req.session.destroy(() => {
+          res.json({ ok: true });
+        });
+      });
+    } catch (err) {
+      await client.query("ROLLBACK");
+      return next(err);
+    } finally {
+      client.release();
+    }
+  });
+
   app.get("/api/lists", requireAuth, async (req, res, next) => {
     try {
       const listsResult = await pool.query(
@@ -327,6 +430,58 @@ export const getAuthApp = () => {
         ]
       );
       return res.status(201).json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.delete(
+    "/api/lists/:listId/items/:tmdbId",
+    requireAuth,
+    async (req, res, next) => {
+      const listId = Number(req.params.listId);
+      const tmdbId = Number(req.params.tmdbId);
+      if (!Number.isFinite(listId) || !Number.isFinite(tmdbId)) {
+        return res.status(400).json({ message: "Invalid list or movie id." });
+      }
+      try {
+        const listResult = await pool.query(
+          "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+          [listId, req.user.id]
+        );
+        if (!listResult.rows.length) {
+          return res.status(404).json({ message: "List not found." });
+        }
+        await pool.query(
+          "DELETE FROM list_items WHERE list_id = $1 AND tmdb_id = $2",
+          [listId, tmdbId]
+        );
+        return res.json({ ok: true });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.delete("/api/lists/:listId", requireAuth, async (req, res, next) => {
+    const listId = Number(req.params.listId);
+    if (!Number.isFinite(listId)) {
+      return res.status(400).json({ message: "Invalid list id." });
+    }
+    try {
+      const listResult = await pool.query(
+        "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+        [listId, req.user.id]
+      );
+      if (!listResult.rows.length) {
+        return res.status(404).json({ message: "List not found." });
+      }
+      await pool.query("DELETE FROM list_items WHERE list_id = $1", [listId]);
+      await pool.query("DELETE FROM lists WHERE id = $1 AND user_id = $2", [
+        listId,
+        req.user.id,
+      ]);
+      return res.json({ ok: true });
     } catch (err) {
       return next(err);
     }
