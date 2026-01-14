@@ -3,6 +3,8 @@ import { AnimatePresence } from "framer-motion";
 import { MovieModal } from "./BrowsePage.jsx";
 import {
   createList,
+  addMovieToList,
+  updateListName,
   deleteList,
   getLists,
   removeMovieFromList,
@@ -63,11 +65,26 @@ function AccountPage({ initialTab = "rooms" }) {
   const [listError, setListError] = useState("");
   const [listMessage, setListMessage] = useState("");
   const [activeListId, setActiveListId] = useState("");
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
+  const [aiModalOpen, setAiModalOpen] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiResults, setAiResults] = useState([]);
+  const [aiTitle, setAiTitle] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState("");
+  const [aiSaving, setAiSaving] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
   const [selectedMediaType, setSelectedMediaType] = useState("movie");
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchModalOpen, setSearchModalOpen] = useState(false);
+  const [addedSearchIds, setAddedSearchIds] = useState({});
   const [profileError, setProfileError] = useState("");
   const [profileMessage, setProfileMessage] = useState("");
   const [passwordError, setPasswordError] = useState("");
@@ -102,6 +119,25 @@ function AccountPage({ initialTab = "rooms" }) {
       active = false;
     };
   }, [activeTab]);
+
+  useEffect(() => {
+    if (!activeList) {
+      setRenameOpen(false);
+      setRenameValue("");
+      return;
+    }
+    if (!renameOpen) {
+      setRenameValue(activeList.name);
+    }
+  }, [activeList, renameOpen]);
+
+  useEffect(() => {
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchLoading(false);
+    setSearchError("");
+    setAddedSearchIds({});
+  }, [activeListId]);
 
   useEffect(() => {
     if (activeTab !== "settings") return;
@@ -274,6 +310,26 @@ function AccountPage({ initialTab = "rooms" }) {
     setListMessage("List deleted.");
   };
 
+  const handleRenameList = async (event) => {
+    event.preventDefault();
+    if (!activeList) return;
+    setListError("");
+    setListMessage("");
+    const result = await updateListName(activeList.id, renameValue);
+    if (result?.error) {
+      setListError(result.error);
+      return;
+    }
+    const refresh = await getLists();
+    if (refresh?.error) {
+      setListError(refresh.error);
+      return;
+    }
+    syncLists(refresh.lists || [], activeList.id);
+    setRenameOpen(false);
+    setListMessage("List renamed.");
+  };
+
   const handleRemoveMovie = async (listId, tmdbId) => {
     if (!listId || !tmdbId) return;
     setListError("");
@@ -341,10 +397,173 @@ function AccountPage({ initialTab = "rooms" }) {
     }
   };
 
+  const handleSearchSubmit = async (event) => {
+    event.preventDefault();
+    if (!TMDB_API_KEY) {
+      setSearchError("Missing TMDB API key.");
+      return;
+    }
+    const query = searchQuery.trim();
+    if (!query) {
+      setSearchError("Search query is required.");
+      return;
+    }
+    setSearchLoading(true);
+    setSearchError("");
+    try {
+      const url = buildTmdbUrl("/search/multi", { query });
+      const data = await fetchTmdbJson(url);
+      const items = (data?.results || [])
+        .filter(
+          (item) => item.media_type === "movie" || item.media_type === "tv"
+        )
+        .slice(0, 10)
+        .map((item) => ({
+          id: item.id,
+          mediaType: item.media_type,
+          title: item.title || item.name || "Untitled",
+          poster_path: item.poster_path || null,
+          release_date: item.release_date || item.first_air_date || null,
+        }));
+      setSearchResults(items);
+      if (!items.length) {
+        setSearchError("No results found.");
+      }
+    } catch (err) {
+      setSearchError(err.message || "Search failed.");
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  const handleOpenSearchModal = () => {
+    setSearchModalOpen(true);
+    setSearchError("");
+  };
+
+  const handleCloseSearchModal = () => {
+    setSearchModalOpen(false);
+  };
+
+  const handleAddSearchResult = async (movie) => {
+    if (!activeList) return;
+    const key = `${movie.mediaType}-${movie.id}`;
+    if (addedSearchIds[key]) return;
+    setListError("");
+    setListMessage("");
+    const result = await addMovieToList(activeList.id, movie);
+    if (result?.error) {
+      setListError(result.error);
+      return;
+    }
+    setAddedSearchIds((prev) => ({ ...prev, [key]: true }));
+    const refresh = await getLists();
+    if (refresh?.error) {
+      setListError(refresh.error);
+      return;
+    }
+    syncLists(refresh.lists || [], activeList.id);
+    setListMessage("Added to list.");
+  };
+
   const handleCloseMovie = () => {
     setSelectedMedia(null);
     setDetails(null);
     setDetailsError("");
+  };
+
+  const handleOpenAiModal = () => {
+    setAiModalOpen(true);
+    setAiError("");
+  };
+
+  const handleCloseAiModal = () => {
+    setAiModalOpen(false);
+  };
+
+  const handleAiSubmit = (event) => {
+    event.preventDefault();
+    generateAiList();
+  };
+
+  const generateAiList = async () => {
+    const prompt = aiPrompt.trim();
+    if (!prompt) {
+      setAiError("Prompt is required.");
+      return;
+    }
+    setAiLoading(true);
+    setAiError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/ai/list`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ prompt }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAiError(data?.message || "Unable to generate list.");
+        return;
+      }
+      setAiTitle(data.title || prompt);
+      setAiResults(Array.isArray(data.movies) ? data.movies : []);
+    } catch (err) {
+      setAiError("Network error. Please try again.");
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
+  const handleAiConfirm = () => {
+    if (!aiResults.length) {
+      setAiError("No AI results to save.");
+      return;
+    }
+    setAiSaving(true);
+    setAiError("");
+    const run = async () => {
+      const result = await createList(aiTitle || "AI list");
+      if (result?.error || !result?.list?.id) {
+        setAiError(result?.error || "Unable to create list.");
+        setAiSaving(false);
+        return;
+      }
+      const listId = result.list.id;
+      await Promise.all(
+        aiResults.map((movie) =>
+          addMovieToList(listId, {
+            id: movie.id,
+            mediaType: movie.mediaType || "movie",
+            title: movie.title,
+            name: movie.name,
+            poster_path: movie.poster_path,
+            release_date: movie.release_date,
+            first_air_date: movie.release_date,
+          })
+        )
+      );
+      const refresh = await getLists();
+      if (refresh?.error) {
+        setAiError(refresh.error);
+        setAiSaving(false);
+        return;
+      }
+      syncLists(refresh.lists || [], listId);
+      setListMessage("List created.");
+      setAiModalOpen(false);
+      setAiResults([]);
+      setAiTitle("");
+      setAiPrompt("");
+      setAiSaving(false);
+    };
+    run();
+  };
+
+  const handleAiBack = () => {
+    setAiResults([]);
+    setAiTitle("");
+    setAiError("");
   };
 
   return (
@@ -415,26 +634,46 @@ function AccountPage({ initialTab = "rooms" }) {
                     Make themed collections and add movies from any title page.
                   </p>
                 </div>
-                <form
-                  className="mt-5 flex flex-col sm:flex-row gap-3"
-                  onSubmit={handleCreateList}
-                >
-                  <input
-                    type="text"
-                    value={listName}
-                    onChange={(event) => {
-                      setListName(event.target.value);
-                      setListError("");
-                      setListMessage("");
-                    }}
-                    placeholder="List name"
-                    className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-                  />
+                <form className="mt-5 space-y-3" onSubmit={handleCreateList}>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                    <input
+                      type="text"
+                      value={listName}
+                      onChange={(event) => {
+                        setListName(event.target.value);
+                        setListError("");
+                        setListMessage("");
+                      }}
+                      placeholder="List name"
+                      className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                    >
+                      Create list
+                    </button>
+                  </div>
                   <button
-                    type="submit"
-                    className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                    type="button"
+                    onClick={handleOpenAiModal}
+                    className="inline-flex w-fit items-center justify-center gap-2 self-start px-4 py-2 rounded-lg border border-slate-700/80 bg-slate-900/60 text-sm text-slate-100 hover:border-cyan-400/60 hover:text-cyan-100 transition"
                   >
-                    Create list
+                    <svg
+                      width="18"
+                      height="18"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M12 3l1.6 3.9L18 8.5l-3.6 2.6L13 15l-3-2.2L6 13.5l1.4-4L4 8.5l4.4-1.6L10 3z" />
+                      <path d="M17.5 14.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+                    </svg>
+                    Create list with AI
                   </button>
                 </form>
                 {listError && (
@@ -483,21 +722,80 @@ function AccountPage({ initialTab = "rooms" }) {
 
                     {activeList ? (
                       <div>
-                        <div className="flex items-center justify-between gap-4">
-                          <div>
-                            <h3 className="text-lg font-semibold">
-                              {activeList.name}
-                            </h3>
-                            <p className="text-xs text-slate-400 mt-1">
-                              {activeList.movies?.length || 0} movies
-                            </p>
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1">
+                            {renameOpen ? (
+                              <form
+                                className="space-y-2"
+                                onSubmit={handleRenameList}
+                              >
+                                <input
+                                  type="text"
+                                  value={renameValue}
+                                  onChange={(event) =>
+                                    setRenameValue(event.target.value)
+                                  }
+                                  className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                                />
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="submit"
+                                    className="px-3 py-1.5 rounded-lg bg-cyan-500 text-slate-950 text-xs font-semibold hover:bg-cyan-400 transition"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setRenameOpen(false);
+                                      setRenameValue(activeList.name);
+                                    }}
+                                    className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </form>
+                            ) : (
+                              <>
+                                <h3 className="text-lg font-semibold">
+                                  {activeList.name}
+                                </h3>
+                                <p className="text-xs text-slate-400 mt-1">
+                                  {activeList.movies?.length || 0} movies
+                                </p>
+                              </>
+                            )}
                           </div>
+                          <div className="flex items-center gap-2">
+                            {!renameOpen && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setRenameOpen(true);
+                                  setRenameValue(activeList.name);
+                                }}
+                                className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition"
+                              >
+                                Rename
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteList(activeList.id)}
+                              className="px-3 py-1.5 rounded-lg border border-rose-500/50 text-xs text-rose-100 hover:bg-rose-500/10 transition"
+                            >
+                              Delete list
+                            </button>
+                          </div>
+                        </div>
+                        <div className="mt-4">
                           <button
                             type="button"
-                            onClick={() => handleDeleteList(activeList.id)}
-                            className="px-3 py-1.5 rounded-lg border border-rose-500/50 text-xs text-rose-100 hover:bg-rose-500/10 transition"
+                            onClick={handleOpenSearchModal}
+                            className="inline-flex items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-900/60 px-4 py-2 text-sm text-slate-100 hover:border-cyan-400/60 hover:text-cyan-100 transition"
                           >
-                            Delete list
+                            Search
                           </button>
                         </div>
                         {activeList.movies?.length ? (
@@ -736,6 +1034,232 @@ function AccountPage({ initialTab = "rooms" }) {
           />
         )}
       </AnimatePresence>
+
+      {aiModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={handleCloseAiModal}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-3xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Create list with AI</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Describe the vibe and we will build a list for you.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseAiModal}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            {aiResults.length === 0 && (
+              <form className="mt-5 space-y-4" onSubmit={handleAiSubmit}>
+                <div className="space-y-2">
+                  <label
+                    className="text-xs text-slate-400"
+                    htmlFor="ai-list-prompt"
+                  >
+                    Prompt
+                  </label>
+                  <input
+                    id="ai-list-prompt"
+                    type="text"
+                    value={aiPrompt}
+                    onChange={(event) => setAiPrompt(event.target.value)}
+                    placeholder="Movie list for rainy mood"
+                    className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={aiLoading}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                >
+                  {aiLoading ? "Generating..." : "Generate list"}
+                </button>
+                {aiError && (
+                  <div className="text-xs text-rose-300">{aiError}</div>
+                )}
+              </form>
+            )}
+            {aiResults.length > 0 && (
+              <div className="mt-6 space-y-4">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                    List title
+                  </div>
+                  <div className="text-lg font-semibold mt-2">{aiTitle}</div>
+                </div>
+                <div className="max-h-[360px] overflow-y-auto pr-1">
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {aiResults.map((movie) => (
+                      <div
+                        key={`${movie.title}-${movie.year}`}
+                        className="rounded-xl border border-slate-800 bg-slate-900/60 p-4"
+                      >
+                        <div className="text-sm font-semibold text-slate-100">
+                          {movie.title}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">
+                          {(movie.year ||
+                            movie.release_date?.toString().slice(0, 4) ||
+                            "--")}{" "}
+                          • {movie.genre || "Mixed"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={handleAiBack}
+                    className="px-4 py-2 rounded-lg border border-slate-700/80 text-sm text-slate-200 hover:border-slate-500 transition"
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={generateAiList}
+                    disabled={aiLoading}
+                    className="px-4 py-2 rounded-lg border border-slate-700/80 text-sm text-slate-200 hover:border-slate-500 transition"
+                  >
+                    {aiLoading ? "Generating..." : "Generate again"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleAiConfirm}
+                    disabled={aiSaving}
+                    className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                  >
+                    {aiSaving ? "Saving..." : "Confirm"}
+                  </button>
+                </div>
+                {aiError && (
+                  <div className="text-xs text-rose-300">{aiError}</div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {searchModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={handleCloseSearchModal}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Search and add</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Find movies or series and add them to this list.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseSearchModal}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            <form
+              className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center"
+              onSubmit={handleSearchSubmit}
+            >
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setSearchError("");
+                }}
+                placeholder="Search movies or series"
+                className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              />
+              <button
+                type="submit"
+                disabled={searchLoading}
+                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+              >
+                {searchLoading ? "Searching..." : "Search"}
+              </button>
+            </form>
+            {searchError && (
+              <div className="mt-3 text-xs text-rose-300">{searchError}</div>
+            )}
+            {searchResults.length > 0 && (
+              <div className="mt-4 max-h-[360px] overflow-y-auto pr-1">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {searchResults.map((movie) => {
+                    const key = `${movie.mediaType}-${movie.id}`;
+                    const alreadyInList = !!activeList?.movies?.some(
+                      (item) =>
+                        item.id === movie.id &&
+                        (item.mediaType || "movie") === movie.mediaType
+                    );
+                    const isAdded = addedSearchIds[key] || alreadyInList;
+                    return (
+                      <div
+                        key={key}
+                        className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"
+                      >
+                      <div className="h-14 w-10 overflow-hidden rounded-md bg-slate-800">
+                        {movie.poster_path ? (
+                          <img
+                            src={`https://image.tmdb.org/t/p/w185${movie.poster_path}`}
+                            alt={movie.title}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                        ) : (
+                          <div className="h-full w-full flex items-center justify-center text-[10px] text-slate-500">
+                            No poster
+                          </div>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <div className="text-sm font-semibold text-slate-100 line-clamp-1">
+                          {movie.title}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">
+                          {(movie.release_date || "--")
+                            .toString()
+                            .slice(0, 4)}{" "}
+                          • {movie.mediaType === "tv" ? "Series" : "Movie"}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleAddSearchResult(movie)}
+                        disabled={isAdded}
+                        className={`px-3 py-1.5 rounded-lg border text-xs transition ${
+                          isAdded
+                            ? "border-emerald-500/70 bg-emerald-500/20 text-emerald-100"
+                            : "border-slate-700 text-slate-200 hover:border-slate-500"
+                        }`}
+                      >
+                        {isAdded ? "Added" : "Add"}
+                      </button>
+                    </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

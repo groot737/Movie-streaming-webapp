@@ -5,6 +5,7 @@ import session from "express-session";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import connectPgSimple from "connect-pg-simple";
+import OpenAI from "openai";
 import { pool } from "./db.js";
 
 let cachedApp;
@@ -90,6 +91,8 @@ const requireAuth = (req, res, next) => {
   return next();
 };
 
+const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+
 export const getAuthApp = () => {
   if (cachedApp) {
     return cachedApp;
@@ -98,6 +101,48 @@ export const getAuthApp = () => {
   const app = express();
   const PgSession = connectPgSimple(session);
   const sessionSecret = process.env.SESSION_SECRET || "dev-secret-change-me";
+  const openAiKey = process.env.OPENAI_KEY || "";
+  const openaiClient = openAiKey ? new OpenAI({ apiKey: openAiKey }) : null;
+  const tmdbKey = process.env.TMDB_API_KEY || process.env.VITE_TMDB_API_KEY || "";
+
+  const buildTmdbUrl = (path, params = {}) => {
+    const url = new URL(`${TMDB_BASE_URL}${path}`);
+    const searchParams = new URLSearchParams(params);
+    searchParams.set("api_key", tmdbKey);
+    url.search = searchParams.toString();
+    return url.toString();
+  };
+
+  const searchTmdb = async (item) => {
+    const title = (item?.title || "").trim();
+    if (!title) {
+      return null;
+    }
+    const mediaType = item?.mediaType === "tv" ? "tv" : "movie";
+    const year = item?.year ? String(item.year).trim() : "";
+    const params = { query: title };
+    if (year) {
+      params[mediaType === "movie" ? "year" : "first_air_date_year"] = year;
+    }
+    const url = buildTmdbUrl(`/search/${mediaType}`, params);
+    const response = await fetch(url);
+    if (!response.ok) {
+      return null;
+    }
+    const data = await response.json().catch(() => ({}));
+    const result = data?.results?.[0];
+    if (!result) {
+      return null;
+    }
+    return {
+      id: result.id,
+      mediaType,
+      title: result.title || result.name || title,
+      name: result.name || null,
+      poster_path: result.poster_path || null,
+      release_date: result.release_date || result.first_air_date || null,
+    };
+  };
 
   app.set("trust proxy", 1);
   app.use(cors({ origin: buildCorsOrigin(), credentials: true }));
@@ -396,6 +441,36 @@ export const getAuthApp = () => {
     }
   });
 
+  app.patch("/api/lists/:listId", requireAuth, async (req, res, next) => {
+    const listId = Number(req.params.listId);
+    if (!Number.isFinite(listId)) {
+      return res.status(400).json({ message: "Invalid list id." });
+    }
+    const name = (req.body?.name || "").trim();
+    if (!name) {
+      return res.status(400).json({ message: "List name is required." });
+    }
+    try {
+      const listResult = await pool.query(
+        "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+        [listId, req.user.id]
+      );
+      if (!listResult.rows.length) {
+        return res.status(404).json({ message: "List not found." });
+      }
+      const result = await pool.query(
+        "UPDATE lists SET name = $1 WHERE id = $2 AND user_id = $3 RETURNING id, name",
+        [name, listId, req.user.id]
+      );
+      return res.json({ list: result.rows[0] });
+    } catch (err) {
+      if (err?.code === "23505") {
+        return res.status(409).json({ message: "List already exists." });
+      }
+      return next(err);
+    }
+  });
+
   app.post("/api/lists/:listId/items", requireAuth, async (req, res, next) => {
     const listId = Number(req.params.listId);
     if (!Number.isFinite(listId)) {
@@ -484,6 +559,90 @@ export const getAuthApp = () => {
       return res.json({ ok: true });
     } catch (err) {
       return next(err);
+    }
+  });
+
+  app.post("/api/ai/list", requireAuth, async (req, res) => {
+    if (!openaiClient) {
+      return res.status(500).json({ message: "Missing OpenAI configuration." });
+    }
+    if (!tmdbKey) {
+      return res.status(500).json({ message: "Missing TMDB configuration." });
+    }
+    const prompt = (req.body?.prompt || "").trim();
+    if (!prompt) {
+      return res.status(400).json({ message: "Prompt is required." });
+    }
+    if (prompt.length > 200) {
+      return res
+        .status(400)
+        .json({ message: "Prompt must be 200 characters or less." });
+    }
+
+    try {
+      const response = await openaiClient.chat.completions.create({
+        model: "gpt-4o-mini",
+        temperature: 0.7,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You create concise lists of movies or series. Return JSON with keys: title (string) and movies (array of 10 objects with title, year, genre, mediaType ('movie' or 'tv')). No extra keys.",
+          },
+          {
+            role: "user",
+            content: `Prompt: ${prompt}`,
+          },
+        ],
+      });
+
+      const content = response.choices?.[0]?.message?.content || "{}";
+      let parsed;
+      try {
+        parsed = JSON.parse(content);
+      } catch (err) {
+        return res.status(502).json({ message: "AI response was invalid." });
+      }
+      const title = typeof parsed?.title === "string" ? parsed.title.trim() : "";
+      const movies = Array.isArray(parsed?.movies) ? parsed.movies : [];
+      const normalizedMovies = movies
+        .filter((movie) => movie && typeof movie.title === "string")
+        .slice(0, 10)
+        .map((movie) => ({
+          title: movie.title.trim(),
+          year:
+            typeof movie.year === "string" || typeof movie.year === "number"
+              ? String(movie.year).trim()
+              : "",
+          genre: typeof movie.genre === "string" ? movie.genre.trim() : "",
+          mediaType: movie?.mediaType === "tv" ? "tv" : "movie",
+        }));
+
+      if (!title || normalizedMovies.length === 0) {
+        return res.status(502).json({ message: "AI response was incomplete." });
+      }
+      const resolved = await Promise.all(
+        normalizedMovies.map(async (movie) => {
+          const tmdbMatch = await searchTmdb(movie);
+          if (!tmdbMatch) {
+            return null;
+          }
+          return {
+            ...movie,
+            ...tmdbMatch,
+          };
+        })
+      );
+      const withIds = resolved.filter(Boolean);
+      if (withIds.length === 0) {
+        return res
+          .status(502)
+          .json({ message: "Unable to match titles on TMDB." });
+      }
+      return res.json({ title, movies: withIds });
+    } catch (err) {
+      return res.status(500).json({ message: "Unable to generate list." });
     }
   });
 

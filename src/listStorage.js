@@ -40,6 +40,21 @@ export const createList = async (name) => {
   return { list: data?.list || null };
 };
 
+export const updateListName = async (listId, name) => {
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return { error: "List name is required." };
+  }
+  const data = await requestJson(`/api/lists/${listId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name: trimmed }),
+  });
+  if (data?.error) {
+    return { error: data.error };
+  }
+  return { list: data?.list || null };
+};
+
 export const addMovieToList = async (listId, movie) => {
   const payload = {
     tmdbId: movie.id,
