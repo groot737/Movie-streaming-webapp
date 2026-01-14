@@ -11,6 +11,30 @@
   display: none;
 }
 
+.scrollbar-slate {
+  scrollbar-color: rgba(56, 189, 248, 0.45) rgba(15, 23, 42, 0.8);
+  scrollbar-width: thin;
+}
+
+.scrollbar-slate::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scrollbar-slate::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.8);
+  border-radius: 999px;
+}
+
+.scrollbar-slate::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.45);
+  border-radius: 999px;
+  border: 2px solid rgba(15, 23, 42, 0.8);
+}
+
+.scrollbar-slate::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.7);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;

@@ -799,68 +799,70 @@ function AccountPage({ initialTab = "rooms" }) {
                           </button>
                         </div>
                         {activeList.movies?.length ? (
-                          <div className="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
-                            {activeList.movies.map((movie) => (
-                              <div
-                                key={`${movie.mediaType || "movie"}-${
-                                  movie.id
-                                }`}
-                                className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden cursor-pointer group"
-                                role="button"
-                                tabIndex={0}
-                                onClick={() =>
-                                  handleOpenMedia(
-                                    movie,
-                                    movie.mediaType || "movie"
-                                  )
-                                }
-                                onKeyDown={(event) => {
-                                  if (event.key === "Enter") {
+                          <div className="mt-5 max-h-[60vh] overflow-y-auto pr-1 scrollbar-slate">
+                            <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+                              {activeList.movies.map((movie) => (
+                                <div
+                                  key={`${movie.mediaType || "movie"}-${
+                                    movie.id
+                                  }`}
+                                  className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden cursor-pointer group"
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={() =>
                                     handleOpenMedia(
                                       movie,
                                       movie.mediaType || "movie"
-                                    );
+                                    )
                                   }
-                                }}
-                              >
-                                <div className="relative aspect-[2/3] bg-slate-800">
-                                  {movie.poster_path ? (
-                                    <img
-                                      src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
-                                      alt={movie.title || movie.name || "Movie"}
-                                      className="h-full w-full object-cover"
-                                      loading="lazy"
-                                    />
-                                  ) : (
-                                    <div className="h-full w-full flex items-center justify-center text-xs text-slate-500">
-                                      No poster
+                                  onKeyDown={(event) => {
+                                    if (event.key === "Enter") {
+                                      handleOpenMedia(
+                                        movie,
+                                        movie.mediaType || "movie"
+                                      );
+                                    }
+                                  }}
+                                >
+                                  <div className="relative aspect-[2/3] bg-slate-800">
+                                    {movie.poster_path ? (
+                                      <img
+                                        src={`https://image.tmdb.org/t/p/w500${movie.poster_path}`}
+                                        alt={movie.title || movie.name || "Movie"}
+                                        className="h-full w-full object-cover"
+                                        loading="lazy"
+                                      />
+                                    ) : (
+                                      <div className="h-full w-full flex items-center justify-center text-xs text-slate-500">
+                                        No poster
+                                      </div>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        handleRemoveMovie(activeList.id, movie.id);
+                                      }}
+                                      className="absolute top-2 right-2 rounded-full bg-slate-950/80 border border-slate-700 px-2 py-1 text-[10px] text-slate-200 opacity-0 group-hover:opacity-100 transition"
+                                    >
+                                      Remove
+                                    </button>
+                                  </div>
+                                  <div className="p-3">
+                                    <div className="text-sm font-semibold text-slate-100 line-clamp-1">
+                                      {movie.title || movie.name || "Untitled"}
                                     </div>
-                                  )}
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleRemoveMovie(activeList.id, movie.id);
-                                    }}
-                                    className="absolute top-2 right-2 rounded-full bg-slate-950/80 border border-slate-700 px-2 py-1 text-[10px] text-slate-200 opacity-0 group-hover:opacity-100 transition"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                                <div className="p-3">
-                                  <div className="text-sm font-semibold text-slate-100 line-clamp-1">
-                                    {movie.title || movie.name || "Untitled"}
-                                  </div>
-                                  <div className="text-xs text-slate-400 mt-1">
-                                    {(movie.release_date ||
-                                      movie.first_air_date ||
-                                      "--")
-                                      .toString()
-                                      .slice(0, 4)}
+                                    <div className="text-xs text-slate-400 mt-1">
+                                      {(movie.release_date ||
+                                        movie.first_air_date ||
+                                        "--")
+                                        .toString()
+                                        .slice(0, 4)}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                            ))}
+                              ))}
+                            </div>
                           </div>
                         ) : (
                           <div className="mt-5 rounded-xl border border-dashed border-slate-700 p-8 text-center text-sm text-slate-400">
