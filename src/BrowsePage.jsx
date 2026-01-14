@@ -67,10 +67,10 @@ const tmdbClient = {
       category === "trending"
         ? "/trending/movie/week"
         : category === "popular"
-        ? "/movie/popular"
-        : category === "topRated"
-        ? "/movie/top_rated"
-        : "/movie/upcoming";
+          ? "/movie/popular"
+          : category === "topRated"
+            ? "/movie/top_rated"
+            : "/movie/upcoming";
     const url = buildTmdbUrl(path, { page: String(page) });
     return fetchTmdbJson(url, signal);
   },
@@ -79,10 +79,10 @@ const tmdbClient = {
       category === "trending"
         ? "/trending/tv/week"
         : category === "popular"
-        ? "/tv/popular"
-        : category === "topRated"
-        ? "/tv/top_rated"
-        : "/tv/on_the_air";
+          ? "/tv/popular"
+          : category === "topRated"
+            ? "/tv/top_rated"
+            : "/tv/on_the_air";
     const url = buildTmdbUrl(path, { page: String(page) });
     return fetchTmdbJson(url, signal);
   },
@@ -596,11 +596,10 @@ function BrowsePage() {
                       <button
                         key={option.id}
                         onClick={() => setSearchFilter(option.id)}
-                        className={`px-3 py-1.5 rounded-full text-xs border transition ${
-                          searchFilter === option.id
+                        className={`px-3 py-1.5 rounded-full text-xs border transition ${searchFilter === option.id
                             ? "bg-cyan-500 text-slate-950 border-cyan-400"
                             : "border-slate-800 text-slate-300 hover:border-slate-600"
-                        }`}
+                          }`}
                       >
                         {option.label}
                       </button>
@@ -780,12 +779,12 @@ function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, user }) {
           <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3">
             <div className="flex items-center gap-2 rounded-full bg-slate-900/70 border border-slate-800 px-3 py-2">
               <SearchIcon />
-            <input
-              value={searchInput}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search movies & series..."
-              className="bg-transparent text-sm text-slate-200 focus:outline-none w-full"
-            />
+              <input
+                value={searchInput}
+                onChange={(e) => onSearchChange(e.target.value)}
+                placeholder="Search movies & series..."
+                className="bg-transparent text-sm text-slate-200 focus:outline-none w-full"
+              />
             </div>
           </div>
         </div>
@@ -981,9 +980,8 @@ function MovieCard({ movie, onClick, size = "grid" }) {
     <motion.button
       onClick={onClick}
       whileHover={{ y: -4 }}
-      className={`group text-left rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden hover:border-slate-600 transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 flex h-full flex-col ${
-        size === "row" ? "w-40 flex-shrink-0" : ""
-      }`}
+      className={`group text-left rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden hover:border-slate-600 transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 flex h-full flex-col ${size === "row" ? "w-40 flex-shrink-0" : ""
+        }`}
     >
       <div className="relative w-full aspect-[2/3] bg-slate-800 flex items-center justify-center">
         {poster ? (
@@ -1241,8 +1239,8 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
                 ? "Signing in..."
                 : "Creating account..."
               : isSignIn
-              ? "Sign in"
-              : "Create account"}
+                ? "Sign in"
+                : "Create account"}
           </button>
           <button
             type="button"
@@ -1471,7 +1469,7 @@ export function MovieModal({
               Watch
             </button>
             <button className="px-4 py-2 rounded-lg border border-slate-700">
-              Invite to Room
+              Create room
             </button>
           </div>
         </div>
@@ -1483,9 +1481,8 @@ export function MovieModal({
 function SkeletonCard({ size = "grid" }) {
   return (
     <div
-      className={`rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden animate-pulse ${
-        size === "row" ? "w-40 flex-shrink-0" : ""
-      }`}
+      className={`rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden animate-pulse ${size === "row" ? "w-40 flex-shrink-0" : ""
+        }`}
     >
       <div className="w-full aspect-[2/3] bg-slate-800" />
       <div className="p-3 space-y-2">

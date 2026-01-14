@@ -635,7 +635,7 @@ function Navbar({ onSignIn, onJoin, onSignOut, user }) {
                 >
                   My account
                 </a>
-              )} 
+              )}
               <div className="flex flex-col gap-2 pt-2">
                 {user ? (
                   <button
@@ -697,10 +697,9 @@ function DiscoverSection({ onHeroBackdrop }) {
   const abortRef = useRef(null);
 
   const segmentClass = (tab) =>
-    `px-4 py-2 rounded-full text-sm transition ${
-      activeTab === tab
-        ? "bg-cyan-500 text-slate-950"
-        : "border border-slate-800 text-slate-300 hover:border-slate-600"
+    `px-4 py-2 rounded-full text-sm transition ${activeTab === tab
+      ? "bg-cyan-500 text-slate-950"
+      : "border border-slate-800 text-slate-300 hover:border-slate-600"
     }`;
 
   const fetchTrendingMovies = async (signal) => {
@@ -741,8 +740,8 @@ function DiscoverSection({ onHeroBackdrop }) {
       activeTab === "trending"
         ? cacheRef.current.trending
         : activeTab === "topRated"
-        ? cacheRef.current.topRated
-        : cacheRef.current.search[searchQuery];
+          ? cacheRef.current.topRated
+          : cacheRef.current.search[searchQuery];
 
     if (cached && !ignoreCache) {
       setMovies(cached);
@@ -1207,8 +1206,8 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
                 ? "Signing in..."
                 : "Creating account..."
               : isSignIn
-              ? "Sign in"
-              : "Create account"}
+                ? "Sign in"
+                : "Create account"}
           </button>
           <button
             type="button"
@@ -1287,7 +1286,7 @@ function MovieModal({ movie, onClose }) {
               Add to Tonight's Queue
             </button>
             <button className="px-4 py-2 rounded-lg border border-slate-700">
-              Invite to Room
+              Create room
             </button>
           </div>
         </div>
