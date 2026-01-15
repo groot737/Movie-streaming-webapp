@@ -63,6 +63,7 @@ function RoomWatchPage({ code = "" }) {
   const [selectedSeason] = useState(1);
   const [selectedEpisode] = useState(1);
   const [isAudioBlocked, setIsAudioBlocked] = useState(false);
+  const [isRoomClosed, setIsRoomClosed] = useState(false);
   const abortRef = useRef(null);
   const channelRef = useRef(null);
   const roomPausedRef = useRef(false);
@@ -731,6 +732,12 @@ function RoomWatchPage({ code = "" }) {
       });
     });
 
+    channel.on("broadcast", { event: "room_closed" }, () => {
+      if (!isHost) {
+        setIsRoomClosed(true);
+      }
+    });
+
     channel.subscribe((status) => {
       if (status === "SUBSCRIBED") {
         setChannelReady(true);
@@ -842,6 +849,15 @@ function RoomWatchPage({ code = "" }) {
     if (!roomId) return;
     setHostError("");
     try {
+      // Notify other participants that the room is closing
+      if (channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "room_closed",
+          payload: { from: clientIdRef.current },
+        });
+      }
+
       const response = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
         method: "DELETE",
         credentials: "include",
@@ -1179,6 +1195,39 @@ function RoomWatchPage({ code = "" }) {
             exit={{ opacity: 0 }}
             className="fixed inset-0 pointer-events-none bg-slate-950/40"
           />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {isRoomClosed && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              className="w-full max-w-sm bg-slate-900 border border-slate-800 rounded-3xl p-8 text-center shadow-2xl"
+            >
+              <div className="mx-auto w-16 h-16 rounded-2xl bg-rose-500/10 flex items-center justify-center text-rose-500 mb-6">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="15" y1="9" x2="9" y2="15" />
+                  <line x1="9" y1="9" x2="15" y2="15" />
+                </svg>
+              </div>
+              <h2 className="text-2xl font-semibold text-slate-100 mb-2">Room closed</h2>
+              <p className="text-slate-400 text-sm mb-8">
+                The host has closed this room. You can find more titles to watch in the browse section.
+              </p>
+              <button
+                onClick={() => {
+                  window.location.hash = "#browse";
+                  window.location.reload();
+                }}
+                className="w-full py-4 rounded-2xl bg-cyan-500 text-slate-950 font-semibold hover:bg-cyan-400 transition-all shadow-lg shadow-cyan-500/20 active:scale-95"
+              >
+                Go to Browse
+              </button>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
       <div ref={remoteAudioContainerRef} className="sr-only" />
