@@ -321,10 +321,13 @@ function RoomWatchPage({ code = "" }) {
     const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === "audio");
 
     if (audioTransceiver) {
-      // If we have an audio transceiver, set it to recvonly
-      if (audioTransceiver.direction !== "recvonly") {
+      // Only set to recvonly if we're not currently sending
+      // and the current direction allows receiving
+      const currentDir = audioTransceiver.direction;
+      if (currentDir === "inactive" || currentDir === "sendonly") {
         audioTransceiver.direction = "recvonly";
       }
+      // If it's already sendrecv or recvonly, leave it as is to preserve remote tracks
     } else {
       // Add receive-only audio transceiver so we can hear others even if our mic is off
       pc.addTransceiver("audio", { direction: "recvonly" });
@@ -513,26 +516,37 @@ function RoomWatchPage({ code = "" }) {
       const pc = createPeerConnection(peerId);
 
       try {
-        // Always ensure we can receive audio
-        ensureRecvOnlyAudio(pc);
-
-        // If mic is enabled, add our audio track
-        if (voiceChatEnabledRef.current) {
-          const stream = await ensureLocalStream();
-          stream.getTracks().forEach((track) => {
-            const hasTrack = pc
-              .getSenders()
-              .some((sender) => sender.track === track);
-            if (!hasTrack) {
-              pc.addTrack(track, stream);
-            }
-          });
+        // Always add a receive-only audio transceiver first
+        // This ensures we can receive audio even if our mic is off
+        if (!pc.getTransceivers().some((t) => t.receiver?.track?.kind === "audio")) {
+          pc.addTransceiver("audio", { direction: "recvonly" });
         }
 
-        // Only create offer if we have lower client ID (to avoid duplicate offers)
+        // If mic is enabled, add our audio track and change direction to sendrecv
+        if (voiceChatEnabledRef.current) {
+          const stream = await ensureLocalStream();
+          const audioTrack = stream.getAudioTracks()[0];
+          if (audioTrack) {
+            const transceivers = pc.getTransceivers();
+            const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === "audio");
+            if (audioTransceiver) {
+              // Replace the track and change direction to sendrecv
+              const sender = audioTransceiver.sender;
+              await sender.replaceTrack(audioTrack);
+              audioTransceiver.direction = "sendrecv";
+            } else {
+              // Fallback: add track normally
+              pc.addTrack(audioTrack, stream);
+            }
+          }
+        }
+
+        // Always create offer if we have lower client ID
+        // This establishes the connection even if neither has mic enabled
         if (clientIdRef.current < peerId) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
+          console.log(`Sending offer to ${peerId}, mic enabled: ${voiceChatEnabledRef.current}`);
           channel.send({
             type: "broadcast",
             event: "webrtc-offer",
@@ -563,6 +577,7 @@ function RoomWatchPage({ code = "" }) {
       const pc = createPeerConnection(peerId);
 
       try {
+        console.log(`Received offer from ${peerId}`);
         await pc.setRemoteDescription(data.sdp);
 
         // Process any pending ICE candidates now that remote description is set
@@ -576,24 +591,30 @@ function RoomWatchPage({ code = "" }) {
         }
         pendingIceCandidatesRef.current.delete(peerId);
 
-        // Always ensure we can receive audio
-        ensureRecvOnlyAudio(pc);
+        // Check if we need to add receive-only transceiver
+        const transceivers = pc.getTransceivers();
+        if (!transceivers.some((t) => t.receiver?.track?.kind === "audio")) {
+          pc.addTransceiver("audio", { direction: "recvonly" });
+        }
 
         // If mic is enabled, add our audio track
         if (voiceChatEnabledRef.current) {
           const stream = await ensureLocalStream();
-          stream.getTracks().forEach((track) => {
-            const hasTrack = pc
-              .getSenders()
-              .some((sender) => sender.track === track);
-            if (!hasTrack) {
-              pc.addTrack(track, stream);
+          const audioTrack = stream.getAudioTracks()[0];
+          if (audioTrack) {
+            const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === "audio");
+            if (audioTransceiver && audioTransceiver.sender) {
+              await audioTransceiver.sender.replaceTrack(audioTrack);
+              audioTransceiver.direction = "sendrecv";
+            } else {
+              pc.addTrack(audioTrack, stream);
             }
-          });
+          }
         }
 
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
+        console.log(`Sending answer to ${peerId}, mic enabled: ${voiceChatEnabledRef.current}`);
         channel.send({
           type: "broadcast",
           event: "webrtc-answer",
