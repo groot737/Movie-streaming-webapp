@@ -245,7 +245,7 @@ function RoomWatchPage({ code = "" }) {
     audioEl.srcObject = stream;
     const playPromise = audioEl.play?.();
     if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(() => {});
+      playPromise.catch(() => { });
     }
   };
 
@@ -281,8 +281,32 @@ function RoomWatchPage({ code = "" }) {
     return pc;
   };
 
-  const startVoiceChat = async () => {
-    if (!voiceChatAllowed || !voiceChatEnabled || !channelRef.current) return;
+  const ensureRecvOnlyAudio = (pc) => {
+    if (!pc?.getTransceivers) return;
+    const hasAudio = pc.getTransceivers().some((transceiver) => {
+      const senderTrack = transceiver.sender?.track;
+      const receiverTrack = transceiver.receiver?.track;
+      return (
+        (senderTrack && senderTrack.kind === "audio") ||
+        (receiverTrack && receiverTrack.kind === "audio")
+      );
+    });
+    if (!hasAudio) {
+      pc.addTransceiver("audio", { direction: "recvonly" });
+    }
+  };
+
+  const sendVoiceJoin = () => {
+    if (!voiceChatAllowed || !channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "webrtc-join",
+      payload: { from: clientIdRef.current },
+    });
+  };
+
+  const enableMic = async () => {
+    if (!voiceChatAllowed || !channelRef.current) return;
     setMicError("");
     setMicStatus("starting");
     try {
@@ -293,18 +317,55 @@ function RoomWatchPage({ code = "" }) {
         }
       });
       setMicStatus("active");
-      channelRef.current.send({
-        type: "broadcast",
-        event: "webrtc-join",
-        payload: { from: clientIdRef.current },
+      const renegotiations = [];
+      peerConnectionsRef.current.forEach((pc, peerId) => {
+        const hasTrack = pc
+          .getSenders()
+          .some((sender) => sender.track && sender.track.kind === "audio");
+        if (!hasTrack) {
+          stream.getTracks().forEach((track) => {
+            if (track.kind === "audio") {
+              pc.addTrack(track, stream);
+            }
+          });
+        }
+        if (channelRef.current) {
+          renegotiations.push(
+            pc
+              .createOffer()
+              .then((offer) => pc.setLocalDescription(offer))
+              .then(() => {
+                channelRef.current.send({
+                  type: "broadcast",
+                  event: "webrtc-offer",
+                  payload: {
+                    from: clientIdRef.current,
+                    to: peerId,
+                    sdp: pc.localDescription,
+                  },
+                });
+              })
+              .catch(() => { })
+          );
+        }
       });
+      if (renegotiations.length === 0) {
+        sendVoiceJoin();
+      } else {
+        await Promise.all(renegotiations);
+      }
     } catch (err) {
       setMicStatus("error");
       setMicError(err.message || "Microphone unavailable.");
     }
   };
 
-  const stopVoiceChat = () => {
+  const disableMic = () => {
+    stopLocalStream();
+    setMicStatus("idle");
+  };
+
+  const stopVoiceSession = () => {
     if (channelRef.current) {
       channelRef.current.send({
         type: "broadcast",
@@ -353,18 +414,23 @@ function RoomWatchPage({ code = "" }) {
       const data = payload?.payload || {};
       const peerId = data?.from;
       if (!peerId || peerId === clientIdRef.current) return;
-      if (!voiceChatAllowed || !voiceChatEnabledRef.current) return;
+      if (!voiceChatAllowed) return;
       const pc = createPeerConnection(peerId);
       try {
-        const stream = await ensureLocalStream();
-        stream.getTracks().forEach((track) => {
-          const hasTrack = pc
-            .getSenders()
-            .some((sender) => sender.track === track);
-          if (!hasTrack) {
-            pc.addTrack(track, stream);
-          }
-        });
+        if (voiceChatEnabledRef.current) {
+          const stream = await ensureLocalStream();
+          stream.getTracks().forEach((track) => {
+            const hasTrack = pc
+              .getSenders()
+              .some((sender) => sender.track === track);
+            if (!hasTrack) {
+              pc.addTrack(track, stream);
+            }
+          });
+        } else {
+          // Always add receive-only audio so we can hear others even if our mic is off
+          ensureRecvOnlyAudio(pc);
+        }
         if (clientIdRef.current < peerId) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
@@ -379,8 +445,11 @@ function RoomWatchPage({ code = "" }) {
           });
         }
       } catch (err) {
-        setMicStatus("error");
-        setMicError(err.message || "Microphone unavailable.");
+        // Only set error status if we were trying to enable mic
+        if (voiceChatEnabledRef.current) {
+          setMicStatus("error");
+          setMicError(err.message || "Microphone unavailable.");
+        }
       }
     });
 
@@ -389,19 +458,24 @@ function RoomWatchPage({ code = "" }) {
       const peerId = data?.from;
       if (!peerId || peerId === clientIdRef.current) return;
       if (data?.to && data.to !== clientIdRef.current) return;
-      if (!voiceChatAllowed || !voiceChatEnabledRef.current) return;
+      if (!voiceChatAllowed) return;
       const pc = createPeerConnection(peerId);
       try {
         await pc.setRemoteDescription(data.sdp);
-        const stream = await ensureLocalStream();
-        stream.getTracks().forEach((track) => {
-          const hasTrack = pc
-            .getSenders()
-            .some((sender) => sender.track === track);
-          if (!hasTrack) {
-            pc.addTrack(track, stream);
-          }
-        });
+        if (voiceChatEnabledRef.current) {
+          const stream = await ensureLocalStream();
+          stream.getTracks().forEach((track) => {
+            const hasTrack = pc
+              .getSenders()
+              .some((sender) => sender.track === track);
+            if (!hasTrack) {
+              pc.addTrack(track, stream);
+            }
+          });
+        } else {
+          // Always add receive-only audio so we can hear others even if our mic is off
+          ensureRecvOnlyAudio(pc);
+        }
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         channel.send({
@@ -414,8 +488,11 @@ function RoomWatchPage({ code = "" }) {
           },
         });
       } catch (err) {
-        setMicStatus("error");
-        setMicError(err.message || "Microphone unavailable.");
+        // Only set error status if we were trying to enable mic
+        if (voiceChatEnabledRef.current) {
+          setMicStatus("error");
+          setMicError(err.message || "Microphone unavailable.");
+        }
       }
     });
 
@@ -488,7 +565,7 @@ function RoomWatchPage({ code = "" }) {
     channelRef.current = channel;
 
     return () => {
-      stopVoiceChat();
+      stopVoiceSession();
       channelRef.current = null;
       setChannelReady(false);
       supabase.removeChannel(channel);
@@ -506,10 +583,19 @@ function RoomWatchPage({ code = "" }) {
 
   useEffect(() => {
     if (!channelReady) return;
-    if (voiceChatAllowed && voiceChatEnabled) {
-      startVoiceChat();
+    if (voiceChatAllowed) {
+      sendVoiceJoin();
     } else {
-      stopVoiceChat();
+      stopVoiceSession();
+    }
+  }, [voiceChatAllowed, channelReady]);
+
+  useEffect(() => {
+    if (!channelReady || !voiceChatAllowed) return;
+    if (voiceChatEnabled) {
+      enableMic();
+    } else {
+      disableMic();
     }
   }, [voiceChatAllowed, voiceChatEnabled, channelReady]);
 
@@ -531,8 +617,8 @@ function RoomWatchPage({ code = "" }) {
     mediaId && mediaType === "tv"
       ? `https://vidsrc-embed.ru/embed/tv?tmdb=${mediaId}&season=${selectedSeason}&episode=${selectedEpisode}`
       : imdbId
-      ? `https://vidsrc-embed.ru/embed/movie/${imdbId}`
-      : "";
+        ? `https://vidsrc-embed.ru/embed/movie/${imdbId}`
+        : "";
 
   const summary = useMemo(
     () =>
@@ -700,28 +786,26 @@ function RoomWatchPage({ code = "" }) {
                       setVoiceChatEnabled((prev) => !prev);
                     }}
                     disabled={!voiceChatAllowed}
-                    className={`h-9 w-9 rounded-full border text-xs transition flex items-center justify-center ${
-                      voiceChatEnabled
-                        ? "border-cyan-400 bg-cyan-500 text-slate-950"
-                        : "border-slate-700 bg-slate-900/70 text-slate-200"
-                    } ${
-                      voiceChatAllowed
+                    className={`h-9 w-9 rounded-full border text-xs transition flex items-center justify-center ${voiceChatEnabled
+                      ? "border-cyan-400 bg-cyan-500 text-slate-950"
+                      : "border-slate-700 bg-slate-900/70 text-slate-200"
+                      } ${voiceChatAllowed
                         ? ""
                         : "opacity-50 cursor-not-allowed"
-                    }`}
+                      }`}
                     aria-pressed={voiceChatEnabled}
                     title={
                       !voiceChatAllowed
                         ? "Voice chat disabled for this room"
                         : voiceChatEnabled
-                        ? micStatus === "active"
-                          ? "Mic on"
-                          : micStatus === "starting"
-                          ? "Starting mic"
-                          : micStatus === "error"
-                          ? "Mic blocked"
-                          : "Mic on"
-                        : "Mic off"
+                          ? micStatus === "active"
+                            ? "Mic on"
+                            : micStatus === "starting"
+                              ? "Starting mic"
+                              : micStatus === "error"
+                                ? "Mic blocked"
+                                : "Mic on"
+                          : "Mic off"
                     }
                   >
                     <MicIcon muted={!voiceChatEnabled} />
@@ -734,12 +818,12 @@ function RoomWatchPage({ code = "" }) {
                   {!voiceChatAllowed
                     ? "off"
                     : micStatus === "active"
-                    ? "on"
-                    : micStatus === "starting"
-                    ? "starting"
-                    : micStatus === "error"
-                    ? "blocked"
-                    : "off"}
+                      ? "on"
+                      : micStatus === "starting"
+                        ? "starting"
+                        : micStatus === "error"
+                          ? "blocked"
+                          : "off"}
                 </span>
                 <span>Peers: {voicePeers}</span>
               </div>
@@ -830,8 +914,8 @@ function RoomWatchPage({ code = "" }) {
                 {!supabase
                   ? "Chat unavailable (realtime not configured)."
                   : textChatEnabled
-                  ? "Chat is live."
-                  : "Chat is paused."}
+                    ? "Chat is live."
+                    : "Chat is paused."}
               </div>
             </div>
             <div
@@ -903,11 +987,10 @@ function RoomWatchPage({ code = "" }) {
 function ChatBubble({ name, message, tone = "default" }) {
   return (
     <div
-      className={`rounded-2xl border px-3 py-2 text-xs ${
-        tone === "accent"
-          ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-100"
-          : "border-slate-800 bg-slate-900/60 text-slate-200"
-      }`}
+      className={`rounded-2xl border px-3 py-2 text-xs ${tone === "accent"
+        ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-100"
+        : "border-slate-800 bg-slate-900/60 text-slate-200"
+        }`}
     >
       <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
         {name}
