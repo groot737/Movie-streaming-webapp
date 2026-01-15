@@ -64,6 +64,7 @@ function AccountPage({ initialTab = "rooms" }) {
   const [listName, setListName] = useState("");
   const [listError, setListError] = useState("");
   const [listMessage, setListMessage] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
   const [activeListId, setActiveListId] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -137,6 +138,7 @@ function AccountPage({ initialTab = "rooms" }) {
     setSearchLoading(false);
     setSearchError("");
     setAddedSearchIds({});
+    setShareMessage("");
   }, [activeListId]);
 
   useEffect(() => {
@@ -272,6 +274,7 @@ function AccountPage({ initialTab = "rooms" }) {
     event.preventDefault();
     setListError("");
     setListMessage("");
+    setShareMessage("");
     const result = await createList(listName);
     if (result?.error) {
       setListError(result.error);
@@ -296,6 +299,7 @@ function AccountPage({ initialTab = "rooms" }) {
     if (!confirmed) return;
     setListError("");
     setListMessage("");
+    setShareMessage("");
     const result = await deleteList(listId);
     if (result?.error) {
       setListError(result.error);
@@ -315,6 +319,7 @@ function AccountPage({ initialTab = "rooms" }) {
     if (!activeList) return;
     setListError("");
     setListMessage("");
+    setShareMessage("");
     const result = await updateListName(activeList.id, renameValue);
     if (result?.error) {
       setListError(result.error);
@@ -334,6 +339,7 @@ function AccountPage({ initialTab = "rooms" }) {
     if (!listId || !tmdbId) return;
     setListError("");
     setListMessage("");
+    setShareMessage("");
     const result = await removeMovieFromList(listId, tmdbId);
     if (result?.error) {
       setListError(result.error);
@@ -451,6 +457,7 @@ function AccountPage({ initialTab = "rooms" }) {
     if (addedSearchIds[key]) return;
     setListError("");
     setListMessage("");
+    setShareMessage("");
     const result = await addMovieToList(activeList.id, movie);
     if (result?.error) {
       setListError(result.error);
@@ -551,6 +558,7 @@ function AccountPage({ initialTab = "rooms" }) {
       }
       syncLists(refresh.lists || [], listId);
       setListMessage("List created.");
+      setShareMessage("");
       setAiModalOpen(false);
       setAiResults([]);
       setAiTitle("");
@@ -558,6 +566,36 @@ function AccountPage({ initialTab = "rooms" }) {
       setAiSaving(false);
     };
     run();
+  };
+
+  const handleShareList = async () => {
+    if (!activeList?.shareCode) {
+      setListError("Share code unavailable.");
+      setShareMessage("");
+      return;
+    }
+    const base = `${window.location.origin}${window.location.pathname}`;
+    const shareLink = `${base}#list?code=${activeList.shareCode}`;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareLink);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = shareLink;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setShareMessage("Share link copied.");
+      setListError("");
+    } catch (err) {
+      setListError("Unable to copy share link.");
+      setShareMessage("");
+    }
   };
 
   const handleAiBack = () => {
@@ -767,7 +805,17 @@ function AccountPage({ initialTab = "rooms" }) {
                               </>
                             )}
                           </div>
-                          <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2">
+                            {!renameOpen && (
+                              <button
+                                type="button"
+                                onClick={handleShareList}
+                                disabled={!activeList.shareCode}
+                                className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition disabled:cursor-not-allowed disabled:opacity-50"
+                              >
+                                Share
+                              </button>
+                            )}
                             {!renameOpen && (
                               <button
                                 type="button"
@@ -789,6 +837,11 @@ function AccountPage({ initialTab = "rooms" }) {
                             </button>
                           </div>
                         </div>
+                        {shareMessage && (
+                          <div className="mt-2 text-xs text-emerald-300">
+                            {shareMessage}
+                          </div>
+                        )}
                         <div className="mt-4">
                           <button
                             type="button"
@@ -843,7 +896,7 @@ function AccountPage({ initialTab = "rooms" }) {
                                         event.stopPropagation();
                                         handleRemoveMovie(activeList.id, movie.id);
                                       }}
-                                      className="absolute top-2 right-2 rounded-full bg-slate-950/80 border border-slate-700 px-2 py-1 text-[10px] text-slate-200 opacity-0 group-hover:opacity-100 transition"
+                                      className="absolute top-2 right-2 rounded-full bg-slate-950/80 border border-slate-700 px-2 py-1 text-[10px] text-slate-200 transition"
                                     >
                                       Remove
                                     </button>

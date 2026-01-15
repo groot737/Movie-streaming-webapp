@@ -92,6 +92,42 @@ const requireAuth = (req, res, next) => {
 };
 
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+const SHARE_CODE_LENGTH = 6;
+const SHARE_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+const generateShareCode = () => {
+  let code = "";
+  for (let i = 0; i < SHARE_CODE_LENGTH; i += 1) {
+    const index = Math.floor(Math.random() * SHARE_CODE_CHARS.length);
+    code += SHARE_CODE_CHARS[index];
+  }
+  return code;
+};
+
+const createListWithShareCode = async (userId, name) => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const shareCode = generateShareCode();
+    const existing = await pool.query(
+      "SELECT 1 FROM lists WHERE share_code = $1",
+      [shareCode]
+    );
+    if (existing.rows.length) {
+      continue;
+    }
+    try {
+      return await pool.query(
+        "INSERT INTO lists (user_id, name, share_code) VALUES ($1, $2, $3) RETURNING id, name, share_code",
+        [userId, name, shareCode]
+      );
+    } catch (err) {
+      if (err?.code === "23505" && err?.constraint?.includes("share_code")) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Unable to generate unique share code.");
+};
 
 export const getAuthApp = () => {
   if (cachedApp) {
@@ -383,7 +419,7 @@ export const getAuthApp = () => {
   app.get("/api/lists", requireAuth, async (req, res, next) => {
     try {
       const listsResult = await pool.query(
-        "SELECT id, name FROM lists WHERE user_id = $1 ORDER BY created_at DESC",
+        "SELECT id, name, share_code FROM lists WHERE user_id = $1 ORDER BY created_at DESC",
         [req.user.id]
       );
       const lists = listsResult.rows;
@@ -414,6 +450,7 @@ export const getAuthApp = () => {
       const payload = lists.map((list) => ({
         id: list.id,
         name: list.name,
+        shareCode: list.share_code || "",
         movies: itemsByList.get(list.id) || [],
       }));
       return res.json({ lists: payload });
@@ -428,10 +465,7 @@ export const getAuthApp = () => {
       return res.status(400).json({ message: "List name is required." });
     }
     try {
-      const result = await pool.query(
-        "INSERT INTO lists (user_id, name) VALUES ($1, $2) RETURNING id, name",
-        [req.user.id, name]
-      );
+      const result = await createListWithShareCode(req.user.id, name);
       return res.status(201).json({ list: result.rows[0] });
     } catch (err) {
       if (err?.code === "23505") {
@@ -557,6 +591,51 @@ export const getAuthApp = () => {
         req.user.id,
       ]);
       return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/lists/share/:code", async (req, res, next) => {
+    const shareCode = (req.params.code || "").trim().toUpperCase();
+    if (!shareCode || shareCode.length !== SHARE_CODE_LENGTH) {
+      return res.status(400).json({ message: "Invalid share code." });
+    }
+    try {
+      const listResult = await pool.query(
+        `SELECT lists.id, lists.name, lists.share_code, users.username
+         FROM lists
+         JOIN users ON users.id = lists.user_id
+         WHERE lists.share_code = $1`,
+        [shareCode]
+      );
+      const list = listResult.rows[0];
+      if (!list) {
+        return res.status(404).json({ message: "Shared list not found." });
+      }
+      const itemsResult = await pool.query(
+        `SELECT tmdb_id, media_type, title, poster_path, release_date
+         FROM list_items
+         WHERE list_id = $1
+         ORDER BY created_at DESC`,
+        [list.id]
+      );
+      const items = itemsResult.rows.map((row) => ({
+        id: row.tmdb_id,
+        mediaType: row.media_type,
+        title: row.title,
+        poster_path: row.poster_path,
+        release_date: row.release_date,
+      }));
+      return res.json({
+        list: {
+          id: list.id,
+          name: list.name,
+          shareCode: list.share_code,
+          owner: { username: list.username || "User" },
+        },
+        items,
+      });
     } catch (err) {
       return next(err);
     }

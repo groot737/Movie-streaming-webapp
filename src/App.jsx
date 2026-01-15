@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import BrowsePage from "./BrowsePage.jsx";
 import AccountPage from "./AccountPage.jsx";
 import WatchPage from "./WatchPage.jsx";
+import SharedListPage from "./SharedListPage.jsx";
 
 const parseHash = () => {
   const hash = window.location.hash || "";
@@ -21,6 +22,12 @@ const parseHash = () => {
     const params = new URLSearchParams(query);
     const tab = params.get("tab") || "rooms";
     return { page: "account", tab };
+  }
+  if (hash.startsWith("#list")) {
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    const params = new URLSearchParams(query);
+    const code = params.get("code") || "";
+    return { page: "list", code };
   }
   return { page: "browse" };
 };
@@ -42,6 +49,10 @@ function App() {
 
   if (route.page === "account") {
     return <AccountPage initialTab={route.tab} />;
+  }
+
+  if (route.page === "list") {
+    return <SharedListPage code={route.code} />;
   }
 
   return <BrowsePage />;
