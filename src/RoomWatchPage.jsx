@@ -66,6 +66,9 @@ function RoomWatchPage({ code = "" }) {
   const [isRoomClosed, setIsRoomClosed] = useState(false);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
   const [activeTab, setActiveTab] = useState("chat"); // 'chat' or 'details'
+  const [currentUser, setCurrentUser] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState("signin");
   const abortRef = useRef(null);
   const channelRef = useRef(null);
   const roomPausedRef = useRef(false);
@@ -109,6 +112,24 @@ function RoomWatchPage({ code = "" }) {
   }, [chatMessages]);
 
   useEffect(() => {
+    const fetchSessionInitial = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        if (data?.user) {
+          setCurrentUser(data.user);
+        }
+      } catch (err) {
+        // Ignore session errors on load.
+      }
+    };
+    fetchSessionInitial();
+  }, []);
+
+  useEffect(() => {
     if (abortRef.current) {
       abortRef.current.abort();
     }
@@ -132,6 +153,33 @@ function RoomWatchPage({ code = "" }) {
         if (!code) {
           throw new Error("Room code is required.");
         }
+
+        let user = currentUser;
+        if (!user) {
+          const meResponse = await fetch(`${API_BASE}/api/auth/me`, {
+            credentials: "include",
+          });
+          const meData = await meResponse.json().catch(() => ({}));
+
+          if (!meData?.user) {
+            setShowAuthModal(true);
+            setLoading(false);
+            return;
+          }
+          user = meData.user;
+          setCurrentUser(user);
+        }
+
+        const meId = Number(user?.id);
+        const username =
+          user?.username ||
+          (typeof user?.email === "string"
+            ? user.email.split("@")[0]
+            : "");
+        if (username) {
+          setDisplayName(username);
+        }
+
         const room = await tmdbClient.getRoomByCode(code, controller.signal);
         const roomData = room?.room;
         if (!roomData?.media_id || !roomData?.media_type) {
@@ -144,30 +192,15 @@ function RoomWatchPage({ code = "" }) {
         setTextChatEnabled(Boolean(roomData.text_chat_enabled));
         setMediaId(roomData.media_id);
         setMediaType(roomData.media_type === "tv" ? "tv" : "movie");
-        try {
-          const meResponse = await fetch(`${API_BASE}/api/auth/me`, {
-            credentials: "include",
-          });
-          const meData = await meResponse.json().catch(() => ({}));
-          const meId = Number(meData?.user?.id);
-          const ownerId = Number(roomData.user_id);
-          const username =
-            meData?.user?.username ||
-            (typeof meData?.user?.email === "string"
-              ? meData.user.email.split("@")[0]
-              : "");
-          if (username) {
-            setDisplayName(username);
+
+        const ownerId = Number(roomData.user_id);
+        if (Number.isFinite(meId) && meId === ownerId) {
+          setIsHost(true);
+          if (!username) {
+            setDisplayName("Host");
           }
-          if (meResponse.ok && Number.isFinite(meId) && meId === ownerId) {
-            setIsHost(true);
-            if (!username) {
-              setDisplayName("Host");
-            }
-          }
-        } catch (err) {
-          // Ignore auth lookup errors for guests.
         }
+
         const detailData = await tmdbClient.getDetails(
           roomData.media_type === "tv" ? "tv" : "movie",
           roomData.media_id,
@@ -186,7 +219,7 @@ function RoomWatchPage({ code = "" }) {
     run();
 
     return () => controller.abort();
-  }, [code]);
+  }, [code, currentUser]);
 
   useEffect(() => {
     roomPausedRef.current = roomPaused;
@@ -512,7 +545,10 @@ function RoomWatchPage({ code = "" }) {
       return undefined;
     }
     const channel = supabase.channel(`room-watch:${code}`, {
-      config: { broadcast: { self: true } },
+      config: {
+        broadcast: { self: true },
+        presence: { key: clientIdRef.current }
+      },
     });
 
     channel.on("broadcast", { event: "playback" }, (payload) => {
@@ -743,15 +779,49 @@ function RoomWatchPage({ code = "" }) {
       });
     });
 
+    channel.on("presence", { event: "join" }, ({ newPresences }) => {
+      newPresences.forEach((p) => {
+        const name = p.name || "A user";
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `system-join-${p.id || Math.random()}-${Date.now()}`,
+            name: "System",
+            message: `${name} joined the room`,
+            tone: "system-join",
+          },
+        ]);
+      });
+    });
+
+    channel.on("presence", { event: "leave" }, ({ leftPresences }) => {
+      leftPresences.forEach((p) => {
+        const name = p.name || "A user";
+        setChatMessages((prev) => [
+          ...prev,
+          {
+            id: `system-leave-${p.id || Math.random()}-${Date.now()}`,
+            name: "System",
+            message: `${name} left the room`,
+            tone: "system-leave",
+          },
+        ]);
+      });
+    });
+
     channel.on("broadcast", { event: "room_closed" }, () => {
       if (!isHost) {
         setIsRoomClosed(true);
       }
     });
 
-    channel.subscribe((status) => {
+    channel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
         setChannelReady(true);
+        await channel.track({
+          name: displayName,
+          id: clientIdRef.current,
+        });
         channel.send({
           type: "broadcast",
           event: "state_request",
@@ -769,6 +839,15 @@ function RoomWatchPage({ code = "" }) {
       supabase.removeChannel(channel);
     };
   }, [code, isHost, voiceChatAllowed]);
+
+  useEffect(() => {
+    if (channelReady && channelRef.current && displayName) {
+      channelRef.current.track({
+        name: displayName,
+        id: clientIdRef.current,
+      });
+    }
+  }, [displayName, channelReady]);
 
   useEffect(() => {
     if (!isHost || !channelRef.current) return;
@@ -1272,6 +1351,19 @@ function RoomWatchPage({ code = "" }) {
           </div>
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {showAuthModal && (
+          <AuthModal
+            mode={authMode}
+            onClose={() => setShowAuthModal(false)}
+            onAuthSuccess={(user) => setCurrentUser(user)}
+            onToggleMode={() =>
+              setAuthMode((prev) => (prev === "signin" ? "register" : "signin"))
+            }
+          />
+        )}
+      </AnimatePresence>
       <div ref={remoteAudioContainerRef} className="sr-only" />
     </div>
   );
@@ -1281,18 +1373,20 @@ function ChatBubble({ name, message, tone = "default" }) {
   const isSystem = name === "System";
 
   return (
-    <div className={`flex flex-col gap-1 ${isSystem ? "items-center py-2" : "items-start"}`}>
-      {!isSystem && (
-        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">
-          {name}
-        </span>
-      )}
+    <div className="flex flex-col gap-1 items-start">
+      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">
+        {name}
+      </span>
       <div
         className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed relative ${isSystem
-          ? "bg-slate-800/20 text-slate-500 font-medium italic border-none"
-          : tone === "accent"
-            ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
-            : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
+            ? tone === "system-join"
+              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
+              : tone === "system-leave"
+                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
+                : "bg-slate-800/20 text-slate-500 font-medium border-none"
+            : tone === "accent"
+              ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
+              : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
           }`}
       >
         {message}
@@ -1346,6 +1440,260 @@ function ArrowLeftIcon() {
     >
       <polyline points="15 18 9 12 15 6" />
     </svg>
+  );
+}
+
+function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [formError, setFormError] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const closeButtonRef = useRef(null);
+  const isSignIn = mode === "signin";
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  useEffect(() => {
+    setFormError("");
+    setUsername("");
+    setPassword("");
+    setConfirmPassword("");
+    setIsSubmitting(false);
+  }, [mode]);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+    const trimmedUsername = username.trim();
+    const passwordHasLetter = /[A-Za-z]/.test(password);
+    const passwordHasNumber = /[0-9]/.test(password);
+    const passwordStrong =
+      password.length >= 8 && passwordHasLetter && passwordHasNumber;
+
+    if (!isSignIn && !trimmedUsername) {
+      setFormError("Username is required!");
+      return;
+    }
+    if (!isSignIn && trimmedUsername.length < 3) {
+      setFormError("Username must be at least 3 characters.");
+      return;
+    }
+    if (!isSignIn && trimmedUsername.length > 32) {
+      setFormError("Username must be 32 characters or less.");
+      return;
+    }
+    if (!trimmedEmail) {
+      setFormError("Email is required.");
+      return;
+    }
+    if (!password) {
+      setFormError("Password is required.");
+      return;
+    }
+    if (!isSignIn && !passwordStrong) {
+      setFormError(
+        "Password must be at least 8 characters and include a letter and a number."
+      );
+      return;
+    }
+    if (!isSignIn && password !== confirmPassword) {
+      setFormError("Passwords do not match.");
+      return;
+    }
+    setFormError("");
+    setIsSubmitting(true);
+    try {
+      const endpoint = isSignIn ? "/api/auth/signin" : "/api/auth/signup";
+      const body = isSignIn
+        ? { email: trimmedEmail, password }
+        : {
+          email: trimmedEmail,
+          username: trimmedUsername,
+          password,
+          confirmPassword,
+        };
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(body),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setFormError(
+          data?.message || "Unable to authenticate. Please try again."
+        );
+        return;
+      }
+      if (data?.user) {
+        onAuthSuccess?.(data.user);
+      }
+      onClose();
+    } catch (err) {
+      setFormError("Network error. Please try again.");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
+          <div>
+            <div className="text-xs uppercase tracking-[0.3em] text-slate-500">
+              GioStream
+            </div>
+            <h3 className="text-lg font-semibold">
+              {isSignIn ? "Sign in" : "Create your account"}
+            </h3>
+          </div>
+          <button
+            ref={closeButtonRef}
+            onClick={onClose}
+            className="px-3 py-1 rounded-full text-xs bg-slate-900 border border-slate-700"
+          >
+            Close
+          </button>
+        </div>
+        <form className="px-6 py-5 space-y-4" onSubmit={handleSubmit}>
+          {formError && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {formError}
+            </div>
+          )}
+          {!isSignIn && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400" htmlFor="auth-username">
+                Username
+              </label>
+              <input
+                id="auth-username"
+                type="text"
+                autoComplete="username"
+                required
+                value={username}
+                onChange={(event) => {
+                  setUsername(event.target.value);
+                  setFormError("");
+                }}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="yourname"
+              />
+            </div>
+          )}
+          <div className="space-y-2">
+            <label className="text-xs text-slate-400" htmlFor="auth-email">
+              Email address
+            </label>
+            <input
+              id="auth-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => {
+                setEmail(event.target.value);
+                setFormError("");
+              }}
+              className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              placeholder="you@example.com"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs text-slate-400" htmlFor="auth-password">
+              Password
+            </label>
+            <input
+              id="auth-password"
+              type="password"
+              autoComplete={isSignIn ? "current-password" : "new-password"}
+              required
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setFormError("");
+              }}
+              className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              placeholder="••••••••"
+            />
+          </div>
+          {!isSignIn && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400" htmlFor="auth-confirm">
+                Confirm password
+              </label>
+              <input
+                id="auth-confirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                value={confirmPassword}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value);
+                  setFormError("");
+                }}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="••••••••"
+              />
+            </div>
+          )}
+          {!isSignIn && (
+            <div className="text-xs text-slate-500">
+              Password must be 8+ characters and include a letter and a number.
+            </div>
+          )}
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+          >
+            {isSubmitting
+              ? isSignIn
+                ? "Signing in..."
+                : "Creating account..."
+              : isSignIn
+                ? "Sign in"
+                : "Create account"}
+          </button>
+          <button
+            type="button"
+            onClick={onToggleMode}
+            className="w-full text-xs text-slate-400 hover:text-slate-200 transition"
+          >
+            {isSignIn
+              ? "New here? Create an account"
+              : "Already have an account? Sign in"}
+          </button>
+        </form>
+      </motion.div>
+    </motion.div>
   );
 }
 
