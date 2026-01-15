@@ -7,14 +7,15 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_URL
 
   return {
+    envPrefix: ["VITE_", "SUPABASE_"],
     plugins: [react()],
     server: {
       port: 3000,
       open: true,
       proxy: apiTarget
         ? {
-            "/api": apiTarget,
-          }
+          "/api": apiTarget,
+        }
         : undefined,
     },
   }
