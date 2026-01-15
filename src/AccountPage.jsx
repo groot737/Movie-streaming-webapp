@@ -760,7 +760,7 @@ function AccountPage({ initialTab = "rooms" }) {
 
                     {activeList ? (
                       <div>
-                        <div className="flex items-start justify-between gap-4">
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                           <div className="flex-1">
                             {renameOpen ? (
                               <form
@@ -796,7 +796,7 @@ function AccountPage({ initialTab = "rooms" }) {
                               </form>
                             ) : (
                               <>
-                                <h3 className="text-lg font-semibold">
+                                <h3 className="text-lg font-semibold leading-snug break-words line-clamp-2 sm:line-clamp-none">
                                   {activeList.name}
                                 </h3>
                                 <p className="text-xs text-slate-400 mt-1">
@@ -805,7 +805,7 @@ function AccountPage({ initialTab = "rooms" }) {
                               </>
                             )}
                           </div>
-                      <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             {!renameOpen && (
                               <button
                                 type="button"
