@@ -1,30 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-const TMDB_API_KEY =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_TMDB_API_KEY) ||
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_TMDB_API_KEY) ||
-  "";
+const API_BASE =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
 
-const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const PROFILE_BASE = "https://image.tmdb.org/t/p/w185";
 const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
 
-const buildTmdbUrl = (path, params = {}) => {
-  const url = new URL(`${TMDB_BASE_URL}${path}`);
-  const searchParams = new URLSearchParams(params);
-  searchParams.set("api_key", TMDB_API_KEY);
-  url.search = searchParams.toString();
-  return url.toString();
-};
-
-const fetchTmdbJson = async (url, signal) => {
-  const res = await fetch(url, { signal });
+const fetchApiJson = async (path, signal) => {
+  const res = await fetch(`${API_BASE}${path}`, { signal });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message =
-      data?.status_message || `TMDB request failed (${res.status}).`;
+    const message = data?.message || `Request failed (${res.status}).`;
     throw new Error(message);
   }
   return data;
@@ -32,20 +20,19 @@ const fetchTmdbJson = async (url, signal) => {
 
 const tmdbClient = {
   getDetails: async (type, id, signal) => {
-    const url = buildTmdbUrl(`/${type}/${id}`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/details/${type}/${id}`, signal);
   },
   getCredits: async (type, id, signal) => {
-    const url = buildTmdbUrl(`/${type}/${id}/credits`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/credits/${type}/${id}`, signal);
   },
   getSimilar: async (type, id, signal) => {
-    const url = buildTmdbUrl(`/${type}/${id}/similar`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/similar/${type}/${id}`, signal);
   },
   getSeason: async (tvId, seasonNumber, signal) => {
-    const url = buildTmdbUrl(`/tv/${tvId}/season/${seasonNumber}`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(
+      `/api/tmdb/season/${tvId}/${seasonNumber}`,
+      signal
+    );
   },
 };
 
@@ -84,11 +71,6 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
   }, []);
 
   useEffect(() => {
-    if (!TMDB_API_KEY) {
-      setError("Missing TMDB API key.");
-      setLoading(false);
-      return;
-    }
     if (abortRef.current) {
       abortRef.current.abort();
     }

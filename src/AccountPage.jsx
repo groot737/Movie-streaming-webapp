@@ -19,27 +19,11 @@ const TAB_LABELS = [
   { id: "settings", label: "Settings" },
 ];
 
-const TMDB_API_KEY =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_TMDB_API_KEY) ||
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_TMDB_API_KEY) ||
-  "";
-
-const TMDB_BASE_URL = "https://api.themoviedb.org/3";
-
-const buildTmdbUrl = (path, params = {}) => {
-  const url = new URL(`${TMDB_BASE_URL}${path}`);
-  const searchParams = new URLSearchParams(params);
-  searchParams.set("api_key", TMDB_API_KEY);
-  url.search = searchParams.toString();
-  return url.toString();
-};
-
-const fetchTmdbJson = async (url, signal) => {
-  const res = await fetch(url, { signal });
+const fetchApiJson = async (path, signal) => {
+  const res = await fetch(`${API_BASE}${path}`, { signal });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message =
-      data?.status_message || `TMDB request failed (${res.status}).`;
+    const message = data?.message || `Request failed (${res.status}).`;
     throw new Error(message);
   }
   return data;
@@ -47,12 +31,10 @@ const fetchTmdbJson = async (url, signal) => {
 
 const tmdbClient = {
   getMovieDetails: async (movieId, signal) => {
-    const url = buildTmdbUrl(`/movie/${movieId}`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/details/movie/${movieId}`, signal);
   },
   getSeriesDetails: async (seriesId, signal) => {
-    const url = buildTmdbUrl(`/tv/${seriesId}`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/details/tv/${seriesId}`, signal);
   },
 };
 
@@ -384,10 +366,6 @@ function AccountPage({ initialTab = "rooms" }) {
     setSelectedMediaType(type);
     setDetails(null);
     setDetailsError("");
-    if (!TMDB_API_KEY) {
-      setDetailsError("Missing TMDB API key.");
-      return;
-    }
     setDetailsLoading(true);
     try {
       const controller = new AbortController();
@@ -405,10 +383,6 @@ function AccountPage({ initialTab = "rooms" }) {
 
   const handleSearchSubmit = async (event) => {
     event.preventDefault();
-    if (!TMDB_API_KEY) {
-      setSearchError("Missing TMDB API key.");
-      return;
-    }
     const query = searchQuery.trim();
     if (!query) {
       setSearchError("Search query is required.");
@@ -417,8 +391,10 @@ function AccountPage({ initialTab = "rooms" }) {
     setSearchLoading(true);
     setSearchError("");
     try {
-      const url = buildTmdbUrl("/search/multi", { query });
-      const data = await fetchTmdbJson(url);
+      const params = new URLSearchParams({ query, page: "1" });
+      const data = await fetchApiJson(
+        `/api/tmdb/search/multi?${params.toString()}`
+      );
       const items = (data?.results || [])
         .filter(
           (item) => item.media_type === "movie" || item.media_type === "tv"

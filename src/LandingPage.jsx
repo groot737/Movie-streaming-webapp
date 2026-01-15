@@ -1,71 +1,17 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
-/*
-  Local dev:
-  - Vite: export VITE_TMDB_API_KEY=your_key
-  - Next: export NEXT_PUBLIC_TMDB_API_KEY=your_key
-*/
-const TMDB_API_KEY =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_TMDB_API_KEY) ||
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_TMDB_API_KEY) ||
-  "";
-const TMDB_BEARER_TOKEN =
-  (typeof import.meta !== "undefined" &&
-    (import.meta.env?.VITE_TMDB_BEARER_TOKEN ||
-      import.meta.env?.VITE_TMDB_READ_ACCESS_TOKEN ||
-      import.meta.env?.VITE_TMDB_TOKEN)) ||
-  (typeof process !== "undefined" &&
-    (process.env?.NEXT_PUBLIC_TMDB_BEARER_TOKEN ||
-      process.env?.NEXT_PUBLIC_TMDB_READ_ACCESS_TOKEN ||
-      process.env?.NEXT_PUBLIC_TMDB_TOKEN)) ||
-  "";
-
-const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
-const TMDB_DEFAULT_HEADERS = {
-  accept: "application/json",
-};
-if (TMDB_BEARER_TOKEN) {
-  TMDB_DEFAULT_HEADERS.Authorization = `Bearer ${TMDB_BEARER_TOKEN}`;
-}
-
-const buildTmdbUrl = (path, params = {}) => {
-  const url = new URL(`${TMDB_BASE_URL}${path}`);
-  const searchParams = new URLSearchParams({
-    include_adult: "false",
-    language: "en-US",
-    page: "1",
-    ...params,
-  });
-  if (TMDB_API_KEY && !TMDB_BEARER_TOKEN) {
-    searchParams.set("api_key", TMDB_API_KEY);
-  }
-  url.search = searchParams.toString();
-  return url.toString();
-};
-
-const fetchTmdbJson = async (url, signal) => {
-  const res = await fetch(url, {
-    signal,
-    headers: TMDB_DEFAULT_HEADERS,
-  });
-  const bodyText = await res.text();
-  let data = null;
-  if (bodyText) {
-    try {
-      data = JSON.parse(bodyText);
-    } catch (err) {
-      data = null;
-    }
-  }
+const fetchApiJson = async (path, signal) => {
+  const res = await fetch(`${API_BASE}${path}`, { signal });
+  const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const statusMessage =
-      data?.status_message || data?.status || `TMDB request failed (${res.status}).`;
-    throw new Error(statusMessage);
+    const message =
+      data?.message || data?.status || `Request failed (${res.status}).`;
+    throw new Error(message);
   }
   return data || {};
 };
@@ -703,31 +649,32 @@ function DiscoverSection({ onHeroBackdrop }) {
     }`;
 
   const fetchTrendingMovies = async (signal) => {
-    const url = buildTmdbUrl("/trending/movie/week");
-    const data = await fetchTmdbJson(url, signal);
+    const data = await fetchApiJson(
+      "/api/tmdb/category/movie/trending?page=1",
+      signal
+    );
     return data.results || [];
   };
 
   const fetchTopRatedMovies = async (signal) => {
-    const url = buildTmdbUrl("/movie/top_rated");
-    const data = await fetchTmdbJson(url, signal);
+    const data = await fetchApiJson(
+      "/api/tmdb/category/movie/topRated?page=1",
+      signal
+    );
     return data.results || [];
   };
 
   const searchMovies = async (query, signal) => {
-    const url = buildTmdbUrl("/search/movie", { query });
-    const data = await fetchTmdbJson(url, signal);
+    const params = new URLSearchParams({ query, page: "1" });
+    const data = await fetchApiJson(
+      `/api/tmdb/search/movie?${params.toString()}`,
+      signal
+    );
     return data.results || [];
   };
 
   useEffect(() => {
     let ignoreCache = refreshKey > 0;
-
-    if (!TMDB_API_KEY && !TMDB_BEARER_TOKEN) {
-      setError("Missing TMDB API key or bearer token.");
-      setLoading(false);
-      return;
-    }
 
     if (activeTab === "search" && searchQuery.trim().length < 2) {
       setMovies([]);
@@ -1448,4 +1395,3 @@ function CheckIcon({ className = "" }) {
 }
 
 export default LandingPage;
-

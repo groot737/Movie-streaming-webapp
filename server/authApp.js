@@ -94,6 +94,20 @@ const requireAuth = (req, res, next) => {
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const SHARE_CODE_LENGTH = 6;
 const SHARE_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const TMDB_CATEGORY_MAP = {
+  movie: {
+    trending: "/trending/movie/week",
+    popular: "/movie/popular",
+    topRated: "/movie/top_rated",
+    upcoming: "/movie/upcoming",
+  },
+  tv: {
+    trending: "/trending/tv/week",
+    popular: "/tv/popular",
+    topRated: "/tv/top_rated",
+    onTheAir: "/tv/on_the_air",
+  },
+};
 
 const generateShareCode = () => {
   let code = "";
@@ -147,6 +161,22 @@ export const getAuthApp = () => {
     searchParams.set("api_key", tmdbKey);
     url.search = searchParams.toString();
     return url.toString();
+  };
+
+  const fetchTmdb = async (path, params = {}) => {
+    if (!tmdbKey) {
+      return { error: "Missing TMDB configuration." };
+    }
+    const url = buildTmdbUrl(path, params);
+    const response = await fetch(url);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return {
+        error:
+          data?.status_message || `TMDB request failed (${response.status}).`,
+      };
+    }
+    return { data };
   };
 
   const searchTmdb = async (item) => {
@@ -639,6 +669,108 @@ export const getAuthApp = () => {
     } catch (err) {
       return next(err);
     }
+  });
+
+  app.get("/api/tmdb/category/:type/:category", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const category = req.params.category || "";
+    const path = TMDB_CATEGORY_MAP[type]?.[category];
+    if (!path) {
+      return res.status(400).json({ message: "Invalid TMDB category." });
+    }
+    const page = Number(req.query?.page) || 1;
+    const result = await fetchTmdb(path, { page: String(page) });
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/search/:type", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const query = (req.query?.query || "").trim();
+    if (!query) {
+      return res.status(400).json({ message: "Query is required." });
+    }
+    const page = Number(req.query?.page) || 1;
+    const result = await fetchTmdb(`/search/${type}`, {
+      query,
+      page: String(page),
+      include_adult: "false",
+    });
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/search/multi", async (req, res) => {
+    const query = (req.query?.query || "").trim();
+    if (!query) {
+      return res.status(400).json({ message: "Query is required." });
+    }
+    const page = Number(req.query?.page) || 1;
+    const result = await fetchTmdb("/search/multi", {
+      query,
+      page: String(page),
+      include_adult: "false",
+    });
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/details/:type/:id", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid TMDB id." });
+    }
+    const result = await fetchTmdb(`/${type}/${id}`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/credits/:type/:id", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid TMDB id." });
+    }
+    const result = await fetchTmdb(`/${type}/${id}/credits`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/similar/:type/:id", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid TMDB id." });
+    }
+    const result = await fetchTmdb(`/${type}/${id}/similar`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/season/:tvId/:seasonNumber", async (req, res) => {
+    const tvId = Number(req.params.tvId);
+    const seasonNumber = Number(req.params.seasonNumber);
+    if (!Number.isFinite(tvId) || !Number.isFinite(seasonNumber)) {
+      return res.status(400).json({ message: "Invalid season request." });
+    }
+    const result = await fetchTmdb(`/tv/${tvId}/season/${seasonNumber}`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
   });
 
   app.post("/api/ai/list", requireAuth, async (req, res) => {

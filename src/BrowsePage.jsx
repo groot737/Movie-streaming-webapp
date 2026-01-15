@@ -2,17 +2,6 @@
 import { AnimatePresence, motion } from "framer-motion";
 import { addMovieToList, getLists } from "./listStorage.js";
 
-/*
-  Local dev:
-  - Vite: export VITE_TMDB_API_KEY=your_key
-  - Next: export NEXT_PUBLIC_TMDB_API_KEY=your_key
-*/
-const TMDB_API_KEY =
-  (typeof import.meta !== "undefined" && import.meta.env?.VITE_TMDB_API_KEY) ||
-  (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_TMDB_API_KEY) ||
-  "";
-
-const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
 const API_BASE =
@@ -42,20 +31,11 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.5, ease: "easeOut" } },
 };
 
-const buildTmdbUrl = (path, params = {}) => {
-  const url = new URL(`${TMDB_BASE_URL}${path}`);
-  const searchParams = new URLSearchParams(params);
-  searchParams.set("api_key", TMDB_API_KEY);
-  url.search = searchParams.toString();
-  return url.toString();
-};
-
-const fetchTmdbJson = async (url, signal) => {
-  const res = await fetch(url, { signal });
+const fetchApiJson = async (path, signal) => {
+  const res = await fetch(`${API_BASE}${path}`, { signal });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message =
-      data?.status_message || `TMDB request failed (${res.status}).`;
+    const message = data?.message || `Request failed (${res.status}).`;
     throw new Error(message);
   }
   return data;
@@ -63,52 +43,44 @@ const fetchTmdbJson = async (url, signal) => {
 
 const tmdbClient = {
   getCategoryMovies: async (category, page, signal) => {
-    const path =
-      category === "trending"
-        ? "/trending/movie/week"
-        : category === "popular"
-          ? "/movie/popular"
-          : category === "topRated"
-            ? "/movie/top_rated"
-            : "/movie/upcoming";
-    const url = buildTmdbUrl(path, { page: String(page) });
-    return fetchTmdbJson(url, signal);
+    const params = new URLSearchParams({ page: String(page) });
+    return fetchApiJson(
+      `/api/tmdb/category/movie/${category}?${params.toString()}`,
+      signal
+    );
   },
   getCategorySeries: async (category, page, signal) => {
-    const path =
-      category === "trending"
-        ? "/trending/tv/week"
-        : category === "popular"
-          ? "/tv/popular"
-          : category === "topRated"
-            ? "/tv/top_rated"
-            : "/tv/on_the_air";
-    const url = buildTmdbUrl(path, { page: String(page) });
-    return fetchTmdbJson(url, signal);
+    const params = new URLSearchParams({ page: String(page) });
+    return fetchApiJson(
+      `/api/tmdb/category/tv/${category}?${params.toString()}`,
+      signal
+    );
   },
   searchMovies: async (query, page, signal) => {
-    const url = buildTmdbUrl("/search/movie", {
+    const params = new URLSearchParams({
       query,
       page: String(page),
-      include_adult: "false",
     });
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(
+      `/api/tmdb/search/movie?${params.toString()}`,
+      signal
+    );
   },
   searchSeries: async (query, page, signal) => {
-    const url = buildTmdbUrl("/search/tv", {
+    const params = new URLSearchParams({
       query,
       page: String(page),
-      include_adult: "false",
     });
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(
+      `/api/tmdb/search/tv?${params.toString()}`,
+      signal
+    );
   },
   getMovieDetails: async (movieId, signal) => {
-    const url = buildTmdbUrl(`/movie/${movieId}`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/details/movie/${movieId}`, signal);
   },
   getSeriesDetails: async (seriesId, signal) => {
-    const url = buildTmdbUrl(`/tv/${seriesId}`);
-    return fetchTmdbJson(url, signal);
+    return fetchApiJson(`/api/tmdb/details/tv/${seriesId}`, signal);
   },
 };
 
@@ -270,13 +242,6 @@ function BrowsePage() {
   };
 
   const fetchMovieRow = async (category, force = false) => {
-    if (!TMDB_API_KEY) {
-      updateMovieRow(category, {
-        loading: false,
-        error: "Missing TMDB API key.",
-      });
-      return;
-    }
     if (movieRowAbortRef.current[category]) {
       movieRowAbortRef.current[category].abort();
     }
@@ -328,13 +293,6 @@ function BrowsePage() {
   };
 
   const fetchSeriesRow = async (category, force = false) => {
-    if (!TMDB_API_KEY) {
-      updateSeriesRow(category, {
-        loading: false,
-        error: "Missing TMDB API key.",
-      });
-      return;
-    }
     if (seriesRowAbortRef.current[category]) {
       seriesRowAbortRef.current[category].abort();
     }
@@ -402,11 +360,6 @@ function BrowsePage() {
       setSearchLoading(false);
       setSearchLoadingMore(false);
       setSearchError("");
-      return;
-    }
-    if (!TMDB_API_KEY) {
-      setSearchError("Missing TMDB API key.");
-      setSearchLoading(false);
       return;
     }
     if (searchAbortRef.current) {
