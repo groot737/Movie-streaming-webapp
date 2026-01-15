@@ -64,6 +64,8 @@ function RoomWatchPage({ code = "" }) {
   const [selectedEpisode] = useState(1);
   const [isAudioBlocked, setIsAudioBlocked] = useState(false);
   const [isRoomClosed, setIsRoomClosed] = useState(false);
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
+  const [activeTab, setActiveTab] = useState("chat"); // 'chat' or 'details'
   const abortRef = useRef(null);
   const channelRef = useRef(null);
   const roomPausedRef = useRef(false);
@@ -96,6 +98,15 @@ function RoomWatchPage({ code = "" }) {
   useEffect(() => {
     window.scrollTo(0, 0);
   }, []);
+
+  useEffect(() => {
+    if (chatScrollRef.current) {
+      chatScrollRef.current.scrollTo({
+        top: chatScrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [chatMessages]);
 
   useEffect(() => {
     if (abortRef.current) {
@@ -931,256 +942,287 @@ function RoomWatchPage({ code = "" }) {
         </div>
       </header>
 
-      <main className="relative max-w-6xl mx-auto px-4 sm:px-6 py-8">
-        <div className="grid gap-6 lg:grid-cols-[1.6fr_0.7fr]">
-          <section className="space-y-6">
+      <main className="relative max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-10 pt-2 pb-8">
+        <div className="grid gap-10 lg:grid-cols-[2.5fr_0.5fr]">
+          <section className={`space-y-6 transition-all duration-500 ${isTheaterMode ? "lg:col-span-2" : ""}`}>
             <motion.div
               initial="hidden"
               animate="show"
               variants={fadeUp}
-              className="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden"
+              className="relative group pr-0"
             >
-              <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-900/80">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.3em] text-slate-400">
-                    {roomTitle}
+              {/* Ambient Glow */}
+              <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-blue-500/20 rounded-2xl blur-3xl opacity-0 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 pointer-events-none hidden lg:block" />
+
+              <div className="relative rounded-2xl lg:rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl flex flex-col-reverse lg:flex-col">
+                <div className="flex items-center justify-between px-4 lg:px-6 py-3 lg:py-4 border-t lg:border-t-0 lg:border-b border-slate-800/50 bg-slate-900/40 backdrop-blur-md">
+                  <div className="flex items-center gap-4">
+                    <button
+                      onClick={() => setIsTheaterMode(!isTheaterMode)}
+                      className={`hidden lg:flex h-8 w-8 rounded-lg border items-center justify-center transition-all ${isTheaterMode ? "bg-cyan-500 border-cyan-400 text-slate-950" : "border-slate-700 text-slate-400 hover:text-slate-200"}`}
+                      title={isTheaterMode ? "Exit Theater Mode" : "Theater Mode"}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <path d="M15 3v18" />
+                      </svg>
+                    </button>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-[0.3em] font-bold text-cyan-500/80">
+                        {roomTitle}
+                      </div>
+                      <div className="text-sm font-bold text-slate-100 mt-0.5 tracking-tight">
+                        {title}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-sm font-semibold text-slate-100 mt-1">
-                    {title}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  {isHost && (
-                    <>
-                      <button
-                        type="button"
-                        onClick={handleTogglePause}
-                        className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
-                      >
-                        {roomPaused ? "Resume" : "Pause"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleShare}
-                        className="rounded-full border border-slate-700 px-3 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
-                      >
-                        {shareMessage ? shareMessage : "Share"}
-                      </button>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex bg-slate-800/50 rounded-full p-1 border border-slate-700/50">
+                      {isHost && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={handleTogglePause}
+                            className="h-8 px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
+                          >
+                            {roomPaused ? "Resume" : "Pause"}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleShare}
+                            className="h-8 px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
+                          >
+                            {shareMessage ? shareMessage : "Share"}
+                          </button>
+                        </>
+                      )}
+                    </div>
+
+                    {isHost && (
                       <button
                         type="button"
                         onClick={handleCloseRoom}
-                        className="rounded-full border border-rose-400/50 px-3 py-1 text-xs text-rose-100 hover:border-rose-300 transition"
+                        className="h-9 px-4 rounded-xl border border-rose-500/20 bg-rose-500/10 text-[10px] uppercase tracking-wider font-bold text-rose-400 hover:bg-rose-500 hover:text-white transition-all"
                       >
-                        Close
+                        End Session
                       </button>
-                    </>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (!voiceChatAllowed) return;
-                      setVoiceChatEnabled((prev) => !prev);
-                    }}
-                    disabled={!voiceChatAllowed}
-                    className={`h-9 w-9 rounded-full border text-xs transition flex items-center justify-center ${voiceChatEnabled
-                      ? "border-cyan-400 bg-cyan-500 text-slate-950"
-                      : "border-slate-700 bg-slate-900/70 text-slate-200"
-                      } ${voiceChatAllowed
-                        ? ""
-                        : "opacity-50 cursor-not-allowed"
-                      }`}
-                    aria-pressed={voiceChatEnabled}
-                    title={
-                      !voiceChatAllowed
-                        ? "Voice chat disabled for this room"
-                        : voiceChatEnabled
-                          ? micStatus === "active"
-                            ? "Mic on"
-                            : micStatus === "starting"
-                              ? "Starting mic"
-                              : micStatus === "error"
-                                ? "Mic blocked"
-                                : "Mic on"
-                          : "Mic off"
-                    }
-                  >
-                    <MicIcon muted={!voiceChatEnabled} />
-                  </button>
-                </div>
-              </div>
-              <div className="px-4 pb-3 text-xs text-slate-500 flex items-center justify-between">
-                <span>
-                  Voice:{" "}
-                  {!voiceChatAllowed
-                    ? "off"
-                    : micStatus === "active"
-                      ? "on"
-                      : micStatus === "starting"
-                        ? "starting"
-                        : micStatus === "error"
-                          ? "blocked"
-                          : "off"}
-                </span>
-                <span>Peers: {voicePeers}</span>
-              </div>
-              {micError && (
-                <div className="px-4 pb-3 text-xs text-rose-300">
-                  {micError}
-                </div>
-              )}
-              {isAudioBlocked && (
-                <div className="px-4 pb-3">
-                  <button
-                    onClick={handleUnmuteAll}
-                    className="w-full py-2 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-xs font-medium hover:bg-cyan-500/30 transition-all flex items-center justify-center gap-2"
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                    >
-                      <path d="M11 5L6 9H2v6h4l5 4V5z" />
-                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
-                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-                    </svg>
-                    Tap to Enable Voice Audio
-                  </button>
-                </div>
-              )}
-              <div className="aspect-[16/9] bg-slate-900">
-                {playerUrl ? (
-                  <div className="relative h-full w-full">
-                    <iframe
-                      title="Player"
-                      src={playerUrl}
-                      className="h-full w-full"
-                      frameBorder="0"
-                      sandbox="allow-scripts allow-same-origin allow-presentation"
-                      allow="autoplay; fullscreen"
-                      allowFullScreen
-                    />
-                    {roomPaused && (
-                      <div className="absolute inset-0 bg-slate-950/70 flex items-center justify-center text-sm text-slate-200">
-                        Playback paused by host.
-                      </div>
                     )}
+
+                    <div className="h-4 w-px bg-slate-800 mx-1" />
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!voiceChatAllowed) return;
+                        setVoiceChatEnabled((prev) => !prev);
+                      }}
+                      disabled={!voiceChatAllowed}
+                      className={`h-9 w-9 rounded-xl border text-xs transition-all flex items-center justify-center ${voiceChatEnabled
+                        ? "border-cyan-400 bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]"
+                        : "border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-500"
+                        } ${voiceChatAllowed ? "" : "opacity-30 cursor-not-allowed"}`}
+                      aria-pressed={voiceChatEnabled}
+                    >
+                      <MicIcon muted={!voiceChatEnabled} />
+                    </button>
                   </div>
-                ) : (
-                  <div className="h-full w-full flex items-center justify-center text-sm text-slate-400">
-                    Player is loading...
-                  </div>
-                )}
+                </div>
+
+                <div className="relative aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700">
+                  {playerUrl ? (
+                    <div className="relative h-full w-full">
+                      <iframe
+                        title="Player"
+                        src={playerUrl}
+                        className="h-full w-full"
+                        frameBorder="0"
+                        sandbox="allow-scripts allow-same-origin allow-presentation"
+                        allow="autoplay; fullscreen"
+                        allowFullScreen
+                      />
+
+                      {roomPaused && (
+                        <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-6">
+                          <div className="w-16 h-16 rounded-full bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-500 mb-4 animate-pulse">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <rect x="6" y="4" width="4" height="16" />
+                              <rect x="14" y="4" width="4" height="16" />
+                            </svg>
+                          </div>
+                          <div className="text-lg font-bold text-white tracking-tight">Stream Paused</div>
+                          <div className="text-sm text-slate-400 mt-1">Waiting for host to resume...</div>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="h-full w-full flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-4">
+                        <div className="w-12 h-12 border-4 border-cyan-500/10 border-t-cyan-500 rounded-full animate-spin" />
+                        <div className="text-sm text-slate-500 font-medium animate-pulse">Initializing screen...</div>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             </motion.div>
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-              {error && (
-                <div className="text-sm text-slate-300">{error}</div>
-              )}
-              {hostError && (
-                <div className="text-sm text-rose-300 mt-2">{hostError}</div>
-              )}
-              {loading && !error && (
-                <div className="text-sm text-slate-400">Loading details...</div>
-              )}
+            {error && (
+              <div className="text-sm text-slate-300">{error}</div>
+            )}
+            {hostError && (
+              <div className="text-sm text-rose-300 mt-2">{hostError}</div>
+            )}
+            {loading && !error && (
+              <div className="text-sm text-slate-400">Loading details...</div>
+            )}
+            {/* Mobile Tab Switcher */}
+            <div className="flex lg:hidden bg-slate-900 border border-slate-800 rounded-2xl p-1 gap-1">
+              <button
+                onClick={() => setActiveTab("chat")}
+                className={`flex-1 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${activeTab === 'chat' ? 'bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                Chat
+              </button>
+              <button
+                onClick={() => setActiveTab("details")}
+                className={`flex-1 py-3 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${activeTab === 'details' ? 'bg-cyan-500 text-slate-950 shadow-lg shadow-cyan-500/20' : 'text-slate-500 hover:text-slate-300'}`}
+              >
+                Details
+              </button>
+            </div>
+
+            <div className={`rounded-3xl border border-slate-800/50 bg-slate-900/40 backdrop-blur-xl p-6 lg:p-8 transition-all duration-500 overflow-hidden relative group/meta ${isTheaterMode ? "opacity-20 lg:hover:opacity-100 lg:scale-95 origin-top" : "opacity-100 scale-100"} ${activeTab !== 'details' ? 'hidden lg:block' : 'block'}`}>
+              {/* Decorative background element */}
+              <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 blur-[100px] rounded-full pointer-events-none" />
+
               {!loading && !error && (
-                <div className="flex flex-wrap gap-5">
-                  <div className="w-28 h-40 rounded-xl overflow-hidden bg-slate-800 flex-shrink-0">
+                <div className="flex flex-wrap gap-8 items-start relative z-10">
+                  <div className="w-[140px] shrink-0 rounded-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-slate-700/50 group/poster">
                     {poster ? (
                       <img
                         src={poster}
                         alt={title}
-                        className="h-full w-full object-cover"
+                        className="w-full h-auto transition-transform duration-700 group-hover/poster:scale-110"
                       />
                     ) : (
-                      <div className="h-full w-full flex items-center justify-center text-xs text-slate-500">
+                      <div className="aspect-[2/3] bg-slate-800 flex items-center justify-center text-[10px] text-slate-500">
                         No poster
                       </div>
                     )}
                   </div>
-                  <div className="space-y-2 flex-1 min-w-[200px]">
-                    <div className="text-2xl font-semibold">{title}</div>
-                    <div className="text-sm text-slate-400">
-                      {year || "----"} / {mediaType.toUpperCase()}
+                  <div className="space-y-4 flex-1 min-w-[200px]">
+                    <div>
+                      <h1 className="text-2xl lg:text-4xl font-black text-white tracking-tighter leading-tight mb-2">
+                        {title}
+                      </h1>
+                      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-widest">
+                          {mediaType}
+                        </span>
+                        <span className="text-xs font-bold text-slate-500">
+                          {year || "----"}
+                        </span>
+                        <span className="hidden sm:block h-1 w-1 rounded-full bg-slate-800" />
+                        <span className="text-xs font-bold text-slate-500">
+                          {details?.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : "Duration N/A"}
+                        </span>
+                      </div>
                     </div>
-                    <div className="text-sm text-slate-300">
-                      {details?.tagline || "Room is live. Share the code below."}
+
+                    <div className="text-base italic text-slate-300 font-medium leading-relaxed max-w-2xl border-l-2 border-cyan-500/30 pl-4">
+                      "{details?.tagline || "Watching together with friends."}"
                     </div>
-                    {summary && (
-                      <div className="text-xs text-slate-400">{summary}</div>
-                    )}
+
+                    <div className="flex flex-wrap gap-2 pt-2">
+                      {details?.genres?.map(g => (
+                        <span key={g.id} className="px-3.5 py-1.5 rounded-xl text-[10px] font-bold bg-slate-800/80 text-slate-300 border border-slate-700/50 uppercase tracking-tighter">
+                          {g.name}
+                        </span>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
+
               {!loading && !error && (
-                <p className="mt-4 text-sm text-slate-300">
-                  {details?.overview || "No overview available."}
-                </p>
+                <div className="mt-8 pt-6 lg:pt-8 border-t border-slate-800/50 relative z-10">
+                  <div className="flex items-center gap-2 mb-4">
+                    <span className="h-0.5 w-4 lg:w-6 bg-cyan-500 rounded-full" />
+                    <h3 className="text-[10px] uppercase tracking-[0.3em] font-black text-slate-500">The Story</h3>
+                  </div>
+                  <p className="text-sm lg:text-base text-slate-300 leading-relaxed max-w-4xl font-medium antialiased">
+                    {details?.overview || "No overview available for this title."}
+                  </p>
+                </div>
               )}
             </div>
           </section>
 
-          <aside className="rounded-2xl border border-slate-800 bg-slate-900/60 flex flex-col min-h-[520px] overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-800 bg-slate-900/80">
-              <div className="text-xs uppercase tracking-[0.25em] text-slate-400">
-                Room chat
-              </div>
-              <div className="text-sm text-slate-300 mt-1">
-                {!supabase
-                  ? "Chat unavailable (realtime not configured)."
-                  : textChatEnabled
-                    ? "Chat is live."
-                    : "Chat is paused."}
-              </div>
-            </div>
-            <div
-              ref={chatScrollRef}
-              className="flex-1 px-4 py-4 space-y-4 overflow-y-auto"
-            >
-              {chatMessages.length === 0 ? (
-                <div className="text-xs text-slate-500">
-                  No messages yet.
+          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'}`}>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-[450px] sm:h-[500px] lg:h-[600px] overflow-hidden shadow-2xl">
+              <div className="px-6 py-4 border-b border-slate-800/50 bg-slate-900/60 flex items-center justify-between">
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-500">
+                    Live Chat
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <span className="h-1.5 w-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                    <span className="text-[11px] font-medium text-slate-300">
+                      Connected
+                    </span>
+                  </div>
                 </div>
-              ) : (
-                chatMessages.map((msg) => (
-                  <ChatBubble
-                    key={msg.id}
-                    name={msg.name}
-                    message={msg.message}
-                    tone={msg.tone}
-                  />
-                ))
-              )}
-            </div>
-            <div className="p-4 border-t border-slate-800 bg-slate-900/80">
-              <div className="flex items-center gap-3">
-                <input
-                  type="text"
-                  placeholder={
-                    chatAvailable ? "Send a message" : "Chat is off"
-                  }
-                  disabled={!chatAvailable}
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      handleSendMessage();
+                <div className="px-2 py-1 rounded bg-slate-800/50 border border-slate-700/50 text-[10px] font-bold text-slate-400">
+                  {voicePeers} {voicePeers === 1 ? 'Peer' : 'Peers'}
+                </div>
+              </div>
+              <div
+                ref={chatScrollRef}
+                className="flex-1 px-4 py-4 space-y-4 overflow-y-auto scrollbar-slate"
+              >
+                {chatMessages.length === 0 ? (
+                  <div className="text-xs text-slate-500">
+                    No messages yet.
+                  </div>
+                ) : (
+                  chatMessages.map((msg) => (
+                    <ChatBubble
+                      key={msg.id}
+                      name={msg.name}
+                      message={msg.message}
+                      tone={msg.tone}
+                    />
+                  ))
+                )}
+              </div>
+              <div className="p-4 border-t border-slate-800 bg-slate-900/80">
+                <div className="flex items-center gap-3">
+                  <input
+                    type="text"
+                    placeholder={
+                      chatAvailable ? "Send a message" : "Chat is off"
                     }
-                  }}
-                  className="flex-1 rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 disabled:opacity-60"
-                />
-                <button
-                  type="button"
-                  disabled={!chatAvailable}
-                  onClick={handleSendMessage}
-                  className="px-4 py-2 rounded-full bg-cyan-500 text-slate-950 text-sm font-medium hover:bg-cyan-400 transition disabled:opacity-60"
-                >
-                  Send
-                </button>
+                    disabled={!chatAvailable}
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        handleSendMessage();
+                      }
+                    }}
+                    className="flex-1 rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    disabled={!chatAvailable}
+                    onClick={handleSendMessage}
+                    className="px-4 py-2 rounded-full bg-cyan-500 text-slate-950 text-sm font-medium hover:bg-cyan-400 transition disabled:opacity-60"
+                  >
+                    Send
+                  </button>
+                </div>
               </div>
             </div>
           </aside>
@@ -1236,17 +1278,25 @@ function RoomWatchPage({ code = "" }) {
 }
 
 function ChatBubble({ name, message, tone = "default" }) {
+  const isSystem = name === "System";
+
   return (
-    <div
-      className={`rounded-2xl border px-3 py-2 text-xs ${tone === "accent"
-        ? "border-cyan-400/40 bg-cyan-500/10 text-cyan-100"
-        : "border-slate-800 bg-slate-900/60 text-slate-200"
-        }`}
-    >
-      <div className="text-[10px] uppercase tracking-[0.2em] text-slate-400">
-        {name}
+    <div className={`flex flex-col gap-1 ${isSystem ? "items-center py-2" : "items-start"}`}>
+      {!isSystem && (
+        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">
+          {name}
+        </span>
+      )}
+      <div
+        className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed relative ${isSystem
+          ? "bg-slate-800/20 text-slate-500 font-medium italic border-none"
+          : tone === "accent"
+            ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
+            : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
+          }`}
+      >
+        {message}
       </div>
-      <div className="mt-1">{message}</div>
     </div>
   );
 }
