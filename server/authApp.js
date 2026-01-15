@@ -143,6 +143,49 @@ const createListWithShareCode = async (userId, name) => {
   throw new Error("Unable to generate unique share code.");
 };
 
+const createRoomWithCode = async ({
+  userId,
+  title,
+  mediaId,
+  mediaType,
+  voiceChatEnabled,
+  textChatEnabled,
+}) => {
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const roomCode = generateShareCode();
+    const existing = await pool.query(
+      "SELECT 1 FROM rooms WHERE room_code = $1",
+      [roomCode]
+    );
+    if (existing.rows.length) {
+      continue;
+    }
+    try {
+      return await pool.query(
+        `INSERT INTO rooms
+         (room_code, user_id, media_id, media_type, title, voice_chat_enabled, text_chat_enabled)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, room_code, user_id, media_id, media_type, title, voice_chat_enabled, text_chat_enabled, created_at`,
+        [
+          roomCode,
+          userId,
+          mediaId,
+          mediaType,
+          title,
+          voiceChatEnabled,
+          textChatEnabled,
+        ]
+      );
+    } catch (err) {
+      if (err?.code === "23505" && err?.constraint?.includes("room_code")) {
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error("Unable to generate unique room code.");
+};
+
 export const getAuthApp = () => {
   if (cachedApp) {
     return cachedApp;
@@ -428,6 +471,7 @@ export const getAuthApp = () => {
         [req.user.id]
       );
       await client.query("DELETE FROM lists WHERE user_id = $1", [req.user.id]);
+      await client.query("DELETE FROM rooms WHERE user_id = $1", [req.user.id]);
       await client.query("DELETE FROM users WHERE id = $1", [req.user.id]);
       await client.query("COMMIT");
       req.logout((err) => {
@@ -443,6 +487,98 @@ export const getAuthApp = () => {
       return next(err);
     } finally {
       client.release();
+    }
+  });
+
+  app.post("/api/rooms", requireAuth, async (req, res, next) => {
+    const title = (req.body?.title || "").trim();
+    const mediaId = Number(req.body?.mediaId);
+    const mediaType = req.body?.mediaType === "tv" ? "tv" : "movie";
+    const voiceChatEnabled = Boolean(req.body?.voiceChatEnabled);
+    const textChatEnabled = Boolean(req.body?.textChatEnabled);
+
+    if (!title) {
+      return res.status(400).json({ message: "Room title is required." });
+    }
+    if (title.length > 120) {
+      return res
+        .status(400)
+        .json({ message: "Room title must be 120 characters or less." });
+    }
+    if (!Number.isFinite(mediaId)) {
+      return res.status(400).json({ message: "Invalid media id." });
+    }
+
+    try {
+      const result = await createRoomWithCode({
+        userId: req.user.id,
+        title,
+        mediaId,
+        mediaType,
+        voiceChatEnabled,
+        textChatEnabled,
+      });
+      return res.status(201).json({ room: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/rooms", requireAuth, async (req, res, next) => {
+    try {
+      const result = await pool.query(
+        `SELECT id, room_code, user_id, media_id, media_type, title,
+                voice_chat_enabled, text_chat_enabled, created_at
+         FROM rooms
+         WHERE user_id = $1
+         ORDER BY created_at DESC`,
+        [req.user.id]
+      );
+      return res.json({ rooms: result.rows });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/rooms/code/:code", async (req, res, next) => {
+    const code = (req.params.code || "").trim().toUpperCase();
+    if (!code || code.length !== SHARE_CODE_LENGTH) {
+      return res.status(400).json({ message: "Invalid room code." });
+    }
+    try {
+      const result = await pool.query(
+        `SELECT id, room_code, user_id, media_id, media_type, title,
+                voice_chat_enabled, text_chat_enabled, created_at
+         FROM rooms
+         WHERE room_code = $1`,
+        [code]
+      );
+      const room = result.rows[0];
+      if (!room) {
+        return res.status(404).json({ message: "Room not found." });
+      }
+      return res.json({ room });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.delete("/api/rooms/:roomId", requireAuth, async (req, res, next) => {
+    const roomId = Number(req.params.roomId);
+    if (!Number.isFinite(roomId)) {
+      return res.status(400).json({ message: "Invalid room id." });
+    }
+    try {
+      const result = await pool.query(
+        "DELETE FROM rooms WHERE id = $1 AND user_id = $2 RETURNING id",
+        [roomId, req.user.id]
+      );
+      if (!result.rows.length) {
+        return res.status(404).json({ message: "Room not found." });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
     }
   });
 

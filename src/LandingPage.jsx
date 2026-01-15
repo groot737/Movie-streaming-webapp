@@ -1185,6 +1185,9 @@ function MovieModal({ movie, onClose }) {
   const backdrop = movie.backdrop_path
     ? `${BACKDROP_BASE}${movie.backdrop_path}`
     : null;
+  const handleCreateRoom = () => {
+    window.location.hash = `#room?id=${movie.id}&type=movie`;
+  };
 
   return (
     <motion.div
@@ -1232,7 +1235,10 @@ function MovieModal({ movie, onClose }) {
             <button className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium">
               Add to Tonight's Queue
             </button>
-            <button className="px-4 py-2 rounded-lg border border-slate-700">
+            <button
+              onClick={handleCreateRoom}
+              className="px-4 py-2 rounded-lg border border-slate-700"
+            >
               Create room
             </button>
           </div>

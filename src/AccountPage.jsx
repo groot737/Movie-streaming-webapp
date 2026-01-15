@@ -43,6 +43,10 @@ function AccountPage({ initialTab = "rooms" }) {
     TAB_LABELS.some((tab) => tab.id === value) ? value : "rooms";
   const [activeTab, setActiveTab] = useState(normalizeTab(initialTab));
   const [lists, setLists] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsError, setRoomsError] = useState("");
+  const [roomsMessage, setRoomsMessage] = useState("");
   const [listName, setListName] = useState("");
   const [listError, setListError] = useState("");
   const [listMessage, setListMessage] = useState("");
@@ -98,6 +102,39 @@ function AccountPage({ initialTab = "rooms" }) {
       syncLists(storedLists);
     };
     loadLists();
+    return () => {
+      active = false;
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== "rooms") return;
+    let active = true;
+    const loadRooms = async () => {
+      setRoomsLoading(true);
+      setRoomsError("");
+      try {
+        const response = await fetch(`${API_BASE}/api/rooms`, {
+          credentials: "include",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.message || "Unable to load rooms.");
+        }
+        if (!active) return;
+        setRooms(Array.isArray(data?.rooms) ? data.rooms : []);
+        setRoomsMessage("");
+      } catch (err) {
+        if (!active) return;
+        setRoomsError(err.message || "Unable to load rooms.");
+        setRooms([]);
+      } finally {
+        if (active) {
+          setRoomsLoading(false);
+        }
+      }
+    };
+    loadRooms();
     return () => {
       active = false;
     };
@@ -358,6 +395,31 @@ function AccountPage({ initialTab = "rooms" }) {
       window.location.reload();
     } catch (err) {
       setDeleteError("Network error. Please try again.");
+    }
+  };
+
+  const handleDeleteRoom = async (roomId) => {
+    if (!roomId) return;
+    const confirmed = window.confirm(
+      "Delete this room? This cannot be undone."
+    );
+    if (!confirmed) return;
+    setRoomsError("");
+    setRoomsMessage("");
+    try {
+      const response = await fetch(`${API_BASE}/api/rooms/${roomId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setRoomsError(data?.message || "Unable to delete room.");
+        return;
+      }
+      setRooms((prev) => prev.filter((room) => room.id !== roomId));
+      setRoomsMessage("Room deleted.");
+    } catch (err) {
+      setRoomsError("Network error. Please try again.");
     }
   };
 
@@ -631,13 +693,86 @@ function AccountPage({ initialTab = "rooms" }) {
                 <div>
                   <h2 className="text-xl font-semibold">Your rooms</h2>
                   <p className="text-sm text-slate-400 mt-1">
-                    Rooms you have created or joined will appear here.
+                    Rooms you have created will appear here.
                   </p>
                 </div>
               </div>
-              <div className="mt-6 rounded-xl border border-dashed border-slate-700 p-10 text-center text-sm text-slate-400">
-                You have no rooms yet.
-              </div>
+              {roomsLoading && (
+                <div className="mt-6 text-sm text-slate-400">
+                  Loading rooms...
+                </div>
+              )}
+              {!roomsLoading && roomsError && (
+                <div className="mt-6 text-sm text-rose-300">{roomsError}</div>
+              )}
+              {!roomsLoading && roomsMessage && (
+                <div className="mt-6 text-sm text-emerald-300">
+                  {roomsMessage}
+                </div>
+              )}
+              {!roomsLoading && !roomsError && rooms.length === 0 && (
+                <div className="mt-6 rounded-xl border border-dashed border-slate-700 p-10 text-center text-sm text-slate-400">
+                  You have no rooms yet.
+                </div>
+              )}
+              {!roomsLoading && rooms.length > 0 && (
+                <div className="mt-6 grid gap-4">
+                  {rooms.map((room) => (
+                    <div
+                      key={room.id}
+                      className="w-full rounded-xl border border-slate-800 bg-slate-900/60 p-4 space-y-3"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <div className="text-sm font-semibold text-slate-100">
+                            {room.title}
+                          </div>
+                          <div className="text-xs text-slate-400 mt-1">
+                            {room.media_type === "tv" ? "Series" : "Movie"} ·{" "}
+                            {room.media_id}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteRoom(room.id)}
+                            className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
+                          >
+                            Close
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              window.location.hash = `#room-watch?code=${room.room_code}`;
+                            }}
+                            className="rounded-full border border-slate-700 px-2.5 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
+                          >
+                            View
+                          </button>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-slate-400">
+                        <div className="tracking-[0.2em] text-cyan-300">
+                          {room.room_code}
+                        </div>
+                        <div>
+                          {room.created_at
+                            ? new Date(room.created_at).toLocaleDateString()
+                            : "--"}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-3 text-[11px] text-slate-400">
+                        <span>
+                          Voice: {room.voice_chat_enabled ? "On" : "Off"}
+                        </span>
+                        <span>
+                          Text: {room.text_chat_enabled ? "On" : "Off"}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </section>
           ) : activeTab === "lists" ? (
             <div className="space-y-6">
