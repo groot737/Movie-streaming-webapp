@@ -62,6 +62,7 @@ function RoomWatchPage({ code = "" }) {
   const [voicePeers, setVoicePeers] = useState(0);
   const [selectedSeason] = useState(1);
   const [selectedEpisode] = useState(1);
+  const [isAudioBlocked, setIsAudioBlocked] = useState(false);
   const abortRef = useRef(null);
   const channelRef = useRef(null);
   const roomPausedRef = useRef(false);
@@ -254,15 +255,33 @@ function RoomWatchPage({ code = "" }) {
       try {
         await audioEl.play();
       } catch (err) {
+        // Broadly detect autoplay/interaction issues
+        if (err.name === "NotAllowedError" || err.name === "NotSupportedError") {
+          setIsAudioBlocked(true);
+        }
         // Retry after a short delay if autoplay fails
         setTimeout(() => {
           audioEl.play().catch(() => {
             console.warn(`Failed to play audio for peer ${peerId}`);
+            setIsAudioBlocked(true);
           });
         }, 100);
       }
     };
     playAudio();
+  };
+
+  const handleUnmuteAll = async () => {
+    setIsAudioBlocked(false);
+    const audioEls = Array.from(remoteAudioRef.current.values());
+    for (const el of audioEls) {
+      try {
+        await el.play();
+      } catch (err) {
+        console.error("Failed to unmute audio element:", err);
+        setIsAudioBlocked(true);
+      }
+    }
   };
 
   const createPeerConnection = (peerId) => {
@@ -991,6 +1010,28 @@ function RoomWatchPage({ code = "" }) {
               {micError && (
                 <div className="px-4 pb-3 text-xs text-rose-300">
                   {micError}
+                </div>
+              )}
+              {isAudioBlocked && (
+                <div className="px-4 pb-3">
+                  <button
+                    onClick={handleUnmuteAll}
+                    className="w-full py-2 rounded-xl bg-cyan-500/20 border border-cyan-400/40 text-cyan-200 text-xs font-medium hover:bg-cyan-500/30 transition-all flex items-center justify-center gap-2"
+                  >
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                    >
+                      <path d="M11 5L6 9H2v6h4l5 4V5z" />
+                      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    </svg>
+                    Tap to Enable Voice Audio
+                  </button>
                 </div>
               )}
               <div className="aspect-[16/9] bg-slate-900">
