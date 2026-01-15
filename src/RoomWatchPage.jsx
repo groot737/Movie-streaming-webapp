@@ -69,6 +69,7 @@ function RoomWatchPage({ code = "" }) {
   const peerConnectionsRef = useRef(new Map());
   const remoteAudioRef = useRef(new Map());
   const remoteAudioContainerRef = useRef(null);
+  const pendingIceCandidatesRef = useRef(new Map());
   const clientIdRef = useRef(
     typeof crypto !== "undefined" && crypto.randomUUID
       ? crypto.randomUUID()
@@ -242,17 +243,34 @@ function RoomWatchPage({ code = "" }) {
       remoteAudioContainerRef.current.appendChild(audioEl);
       remoteAudioRef.current.set(peerId, audioEl);
     }
-    audioEl.srcObject = stream;
-    const playPromise = audioEl.play?.();
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(() => { });
+
+    // Set srcObject and handle playback
+    if (audioEl.srcObject !== stream) {
+      audioEl.srcObject = stream;
     }
+
+    // Ensure audio plays with better error handling
+    const playAudio = async () => {
+      try {
+        await audioEl.play();
+      } catch (err) {
+        // Retry after a short delay if autoplay fails
+        setTimeout(() => {
+          audioEl.play().catch(() => {
+            console.warn(`Failed to play audio for peer ${peerId}`);
+          });
+        }, 100);
+      }
+    };
+    playAudio();
   };
 
   const createPeerConnection = (peerId) => {
     const existing = peerConnectionsRef.current.get(peerId);
     if (existing) return existing;
+
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+
     pc.onicecandidate = (event) => {
       if (!event.candidate || !channelRef.current) return;
       channelRef.current.send({
@@ -265,33 +283,50 @@ function RoomWatchPage({ code = "" }) {
         },
       });
     };
+
     pc.ontrack = (event) => {
       const [stream] = event.streams || [];
       if (stream) {
         attachRemoteStream(peerId, stream);
       }
     };
+
     pc.onconnectionstatechange = () => {
-      if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+      if (pc.connectionState === "connected") {
+        console.log(`Peer ${peerId} connected`);
+      } else if (["failed", "disconnected", "closed"].includes(pc.connectionState)) {
+        console.log(`Peer ${peerId} ${pc.connectionState}`);
+        if (pc.connectionState === "failed") {
+          cleanupPeer(peerId);
+        }
+      }
+    };
+
+    pc.oniceconnectionstatechange = () => {
+      if (pc.iceConnectionState === "failed") {
+        console.log(`ICE connection failed for peer ${peerId}`);
         cleanupPeer(peerId);
       }
     };
+
     peerConnectionsRef.current.set(peerId, pc);
     setVoicePeers(peerConnectionsRef.current.size);
     return pc;
   };
 
   const ensureRecvOnlyAudio = (pc) => {
-    if (!pc?.getTransceivers) return;
-    const hasAudio = pc.getTransceivers().some((transceiver) => {
-      const senderTrack = transceiver.sender?.track;
-      const receiverTrack = transceiver.receiver?.track;
-      return (
-        (senderTrack && senderTrack.kind === "audio") ||
-        (receiverTrack && receiverTrack.kind === "audio")
-      );
-    });
-    if (!hasAudio) {
+    if (!pc?.getTransceivers || !pc?.addTransceiver) return;
+
+    const transceivers = pc.getTransceivers();
+    const audioTransceiver = transceivers.find((t) => t.receiver?.track?.kind === "audio");
+
+    if (audioTransceiver) {
+      // If we have an audio transceiver, set it to recvonly
+      if (audioTransceiver.direction !== "recvonly") {
+        audioTransceiver.direction = "recvonly";
+      }
+    } else {
+      // Add receive-only audio transceiver so we can hear others even if our mic is off
       pc.addTransceiver("audio", { direction: "recvonly" });
     }
   };
@@ -319,16 +354,31 @@ function RoomWatchPage({ code = "" }) {
       setMicStatus("active");
       const renegotiations = [];
       peerConnectionsRef.current.forEach((pc, peerId) => {
-        const hasTrack = pc
-          .getSenders()
-          .some((sender) => sender.track && sender.track.kind === "audio");
-        if (!hasTrack) {
-          stream.getTracks().forEach((track) => {
-            if (track.kind === "audio") {
-              pc.addTrack(track, stream);
-            }
+        const audioTrack = stream.getAudioTracks()[0];
+        if (!audioTrack) return;
+
+        // Check if we already have a sender for this track
+        const senders = pc.getSenders();
+        const audioSender = senders.find((sender) => sender.track?.kind === "audio");
+
+        if (audioSender) {
+          // Replace the track in the existing sender
+          audioSender.replaceTrack(audioTrack).catch((err) => {
+            console.warn(`Failed to replace track for peer ${peerId}:`, err);
           });
+
+          // Update transceiver direction to sendrecv
+          const transceivers = pc.getTransceivers();
+          const audioTransceiver = transceivers.find((t) => t.sender === audioSender);
+          if (audioTransceiver && audioTransceiver.direction !== "sendrecv") {
+            audioTransceiver.direction = "sendrecv";
+          }
+        } else {
+          // Add the track if no sender exists
+          pc.addTrack(audioTrack, stream);
         }
+
+        // Renegotiate with this peer
         if (channelRef.current) {
           renegotiations.push(
             pc
@@ -345,7 +395,9 @@ function RoomWatchPage({ code = "" }) {
                   },
                 });
               })
-              .catch(() => { })
+              .catch((err) => {
+                console.error(`Failed to renegotiate with peer ${peerId}:`, err);
+              })
           );
         }
       });
@@ -361,7 +413,49 @@ function RoomWatchPage({ code = "" }) {
   };
 
   const disableMic = () => {
+    // Stop the local stream
     stopLocalStream();
+
+    // Update all peer connections to receive-only
+    peerConnectionsRef.current.forEach((pc, peerId) => {
+      const senders = pc.getSenders();
+      const audioSender = senders.find((sender) => sender.track?.kind === "audio");
+
+      if (audioSender) {
+        // Remove the track from the sender
+        audioSender.replaceTrack(null).catch((err) => {
+          console.warn(`Failed to remove track for peer ${peerId}:`, err);
+        });
+
+        // Update transceiver direction to recvonly so we can still hear others
+        const transceivers = pc.getTransceivers();
+        const audioTransceiver = transceivers.find((t) => t.sender === audioSender);
+        if (audioTransceiver && audioTransceiver.direction !== "recvonly") {
+          audioTransceiver.direction = "recvonly";
+        }
+
+        // Renegotiate with this peer
+        if (channelRef.current) {
+          pc.createOffer()
+            .then((offer) => pc.setLocalDescription(offer))
+            .then(() => {
+              channelRef.current.send({
+                type: "broadcast",
+                event: "webrtc-offer",
+                payload: {
+                  from: clientIdRef.current,
+                  to: peerId,
+                  sdp: pc.localDescription,
+                },
+              });
+            })
+            .catch((err) => {
+              console.error(`Failed to renegotiate after muting with peer ${peerId}:`, err);
+            });
+        }
+      }
+    });
+
     setMicStatus("idle");
   };
 
@@ -415,8 +509,14 @@ function RoomWatchPage({ code = "" }) {
       const peerId = data?.from;
       if (!peerId || peerId === clientIdRef.current) return;
       if (!voiceChatAllowed) return;
+
       const pc = createPeerConnection(peerId);
+
       try {
+        // Always ensure we can receive audio
+        ensureRecvOnlyAudio(pc);
+
+        // If mic is enabled, add our audio track
         if (voiceChatEnabledRef.current) {
           const stream = await ensureLocalStream();
           stream.getTracks().forEach((track) => {
@@ -427,10 +527,9 @@ function RoomWatchPage({ code = "" }) {
               pc.addTrack(track, stream);
             }
           });
-        } else {
-          // Always add receive-only audio so we can hear others even if our mic is off
-          ensureRecvOnlyAudio(pc);
         }
+
+        // Only create offer if we have lower client ID (to avoid duplicate offers)
         if (clientIdRef.current < peerId) {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
@@ -445,6 +544,7 @@ function RoomWatchPage({ code = "" }) {
           });
         }
       } catch (err) {
+        console.error(`Error handling webrtc-join from ${peerId}:`, err);
         // Only set error status if we were trying to enable mic
         if (voiceChatEnabledRef.current) {
           setMicStatus("error");
@@ -459,9 +559,27 @@ function RoomWatchPage({ code = "" }) {
       if (!peerId || peerId === clientIdRef.current) return;
       if (data?.to && data.to !== clientIdRef.current) return;
       if (!voiceChatAllowed) return;
+
       const pc = createPeerConnection(peerId);
+
       try {
         await pc.setRemoteDescription(data.sdp);
+
+        // Process any pending ICE candidates now that remote description is set
+        const pendingCandidates = pendingIceCandidatesRef.current.get(peerId) || [];
+        for (const candidate of pendingCandidates) {
+          try {
+            await pc.addIceCandidate(candidate);
+          } catch (err) {
+            console.warn(`Failed to add pending ICE candidate for ${peerId}:`, err);
+          }
+        }
+        pendingIceCandidatesRef.current.delete(peerId);
+
+        // Always ensure we can receive audio
+        ensureRecvOnlyAudio(pc);
+
+        // If mic is enabled, add our audio track
         if (voiceChatEnabledRef.current) {
           const stream = await ensureLocalStream();
           stream.getTracks().forEach((track) => {
@@ -472,10 +590,8 @@ function RoomWatchPage({ code = "" }) {
               pc.addTrack(track, stream);
             }
           });
-        } else {
-          // Always add receive-only audio so we can hear others even if our mic is off
-          ensureRecvOnlyAudio(pc);
         }
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         channel.send({
@@ -488,6 +604,7 @@ function RoomWatchPage({ code = "" }) {
           },
         });
       } catch (err) {
+        console.error(`Error handling webrtc-offer from ${peerId}:`, err);
         // Only set error status if we were trying to enable mic
         if (voiceChatEnabledRef.current) {
           setMicStatus("error");
@@ -501,12 +618,25 @@ function RoomWatchPage({ code = "" }) {
       const peerId = data?.from;
       if (!peerId || peerId === clientIdRef.current) return;
       if (data?.to && data.to !== clientIdRef.current) return;
+
       const pc = peerConnectionsRef.current.get(peerId);
       if (!pc) return;
+
       try {
         await pc.setRemoteDescription(data.sdp);
+
+        // Process any pending ICE candidates now that remote description is set
+        const pendingCandidates = pendingIceCandidatesRef.current.get(peerId) || [];
+        for (const candidate of pendingCandidates) {
+          try {
+            await pc.addIceCandidate(candidate);
+          } catch (err) {
+            console.warn(`Failed to add pending ICE candidate for ${peerId}:`, err);
+          }
+        }
+        pendingIceCandidatesRef.current.delete(peerId);
       } catch (err) {
-        // Ignore bad answers.
+        console.error(`Error setting remote description from ${peerId}:`, err);
       }
     });
 
@@ -515,12 +645,22 @@ function RoomWatchPage({ code = "" }) {
       const peerId = data?.from;
       if (!peerId || peerId === clientIdRef.current) return;
       if (data?.to && data.to !== clientIdRef.current) return;
+
       const pc = peerConnectionsRef.current.get(peerId);
       if (!pc || !data?.candidate) return;
+
       try {
-        await pc.addIceCandidate(data.candidate);
+        // Only add ICE candidate if remote description is set
+        if (pc.remoteDescription && pc.remoteDescription.type) {
+          await pc.addIceCandidate(data.candidate);
+        } else {
+          // Buffer the candidate until remote description is set
+          const pending = pendingIceCandidatesRef.current.get(peerId) || [];
+          pending.push(data.candidate);
+          pendingIceCandidatesRef.current.set(peerId, pending);
+        }
       } catch (err) {
-        // Ignore ICE failures.
+        console.warn(`Failed to add ICE candidate for ${peerId}:`, err);
       }
     });
 
