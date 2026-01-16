@@ -170,8 +170,8 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
     mediaType === "tv"
       ? `https://vidsrc-embed.ru/embed/tv?tmdb=${mediaId}&season=${selectedSeason}&episode=${selectedEpisode}`
       : imdbId
-      ? `https://vidsrc-embed.ru/embed/movie/${imdbId}`
-      : "";
+        ? `https://vidsrc-embed.ru/embed/movie/${imdbId}`
+        : "";
   const seasonOptions =
     details?.seasons?.filter((season) => season.season_number > 0) || [];
 
@@ -324,70 +324,44 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
                       ref={episodesRailRef}
                       className="flex gap-3 overflow-x-auto pb-2 pr-6 scrollbar-hide scroll-smooth"
                     >
-                    {seasonLoading && (
-                      <>
-                        {Array.from({ length: 6 }).map((_, idx) => (
-                          <div
-                            key={`episode-skel-${idx}`}
-                            className="h-10 w-40 rounded-full bg-slate-800 animate-pulse flex-shrink-0"
-                          />
-                        ))}
-                      </>
-                    )}
-                    {!seasonLoading &&
-                      episodes.map((episode) => (
-                        <button
-                          key={episode.id}
-                          type="button"
-                          onClick={() =>
-                            setSelectedEpisode(episode.episode_number)
-                          }
-                          className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 flex-shrink-0 ${
-                            selectedEpisode === episode.episode_number
+                      {seasonLoading && (
+                        <>
+                          {Array.from({ length: 6 }).map((_, idx) => (
+                            <div
+                              key={`episode-skel-${idx}`}
+                              className="h-10 w-40 rounded-full bg-slate-800 animate-pulse flex-shrink-0"
+                            />
+                          ))}
+                        </>
+                      )}
+                      {!seasonLoading &&
+                        episodes.map((episode) => (
+                          <button
+                            key={episode.id}
+                            type="button"
+                            onClick={() =>
+                              setSelectedEpisode(episode.episode_number)
+                            }
+                            className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60 flex-shrink-0 ${selectedEpisode === episode.episode_number
                               ? "border-cyan-400 bg-cyan-500 text-slate-950"
                               : "border-slate-800 bg-slate-900/60 text-slate-200 hover:border-slate-600"
-                          }`}
-                        >
-                          <PlayIcon />
-                          <span className="line-clamp-1">
-                            Ep {episode.episode_number}: {episode.name}
-                          </span>
-                        </button>
-                      ))}
-                    {!seasonLoading && episodes.length === 0 && (
-                      <div className="text-xs text-slate-500">
-                        No episodes available.
-                      </div>
-                    )}
+                              }`}
+                          >
+                            <PlayIcon />
+                            <span className="line-clamp-1">
+                              Ep {episode.episode_number}: {episode.name}
+                            </span>
+                          </button>
+                        ))}
+                      {!seasonLoading && episodes.length === 0 && (
+                        <div className="text-xs text-slate-500">
+                          No episodes available.
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
               )}
-            </div>
-
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6">
-              <motion.div initial="hidden" animate="show" variants={fadeUp}>
-                <div className="flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.3em] text-slate-400">
-                  <span>Now playing</span>
-                  {rating && (
-                    <span className="px-2 py-1 rounded-full border border-slate-700 text-slate-200 tracking-normal">
-                      {rating}
-                    </span>
-                  )}
-                </div>
-                <h1 className="mt-4 text-3xl sm:text-4xl lg:text-5xl font-semibold tracking-tight">
-                  {title}
-                </h1>
-                <div className="mt-3 text-sm text-slate-300 flex flex-wrap gap-3">
-                  {year && <span>{year}</span>}
-                  {runtime && <span>{runtime}</span>}
-                  {genres && <span>{genres}</span>}
-                </div>
-                <p className="mt-5 text-slate-300 max-w-2xl">
-                  {details?.overview ||
-                    "Discover the story, the cast, and similar picks below."}
-                </p>
-              </motion.div>
             </div>
 
             <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-6 space-y-5">

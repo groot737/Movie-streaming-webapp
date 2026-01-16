@@ -818,10 +818,14 @@ function RoomWatchPage({ code = "" }) {
     channel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
         setChannelReady(true);
-        await channel.track({
-          name: displayName,
-          id: clientIdRef.current,
-        });
+        // Only track if we have a real username (not the default "Guest")
+        // The useEffect below will handle tracking once displayName is loaded
+        if (displayName !== "Guest") {
+          await channel.track({
+            name: displayName,
+            id: clientIdRef.current,
+          });
+        }
         channel.send({
           type: "broadcast",
           event: "state_request",
@@ -892,9 +896,9 @@ function RoomWatchPage({ code = "" }) {
     : null;
   const playerUrl =
     mediaId && mediaType === "tv"
-      ? `https://vidsrc-embed.ru/embed/tv?tmdb=${mediaId}&season=${selectedSeason}&episode=${selectedEpisode}`
+      ? `https://vidsrc.cc/v2/embed/tv/${mediaId}/${selectedSeason}/${selectedEpisode}`
       : imdbId
-        ? `https://vidsrc-embed.ru/embed/movie/${imdbId}`
+        ? `https://vidsrc.cc/v2/embed/movie/${imdbId}`
         : "";
 
   const summary = useMemo(
@@ -993,7 +997,7 @@ function RoomWatchPage({ code = "" }) {
     setChatInput("");
   };
 
-  const chatAvailable = textChatEnabled && Boolean(supabase);
+  const chatAvailable = textChatEnabled && channelReady;
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
@@ -1379,14 +1383,14 @@ function ChatBubble({ name, message, tone = "default" }) {
       </span>
       <div
         className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed relative ${isSystem
-            ? tone === "system-join"
-              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
-              : tone === "system-leave"
-                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
-                : "bg-slate-800/20 text-slate-500 font-medium border-none"
-            : tone === "accent"
-              ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
-              : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
+          ? tone === "system-join"
+            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
+            : tone === "system-leave"
+              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
+              : "bg-slate-800/20 text-slate-500 font-medium border-none"
+          : tone === "accent"
+            ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
+            : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
           }`}
       >
         {message}
