@@ -14,8 +14,6 @@
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "@consumet/extensions": "^1.8.7",
-    "@dpunkz09/consumet": "^1.8.1",
     "@supabase/supabase-js": "^2.49.1",
     "axios": "^1.13.2",
     "bcrypt": "^5.1.1",
@@ -25,7 +23,6 @@
     "express": "^4.19.2",
     "express-session": "^1.18.1",
     "framer-motion": "^11.15.0",
-    "hls.js": "^1.6.15",
     "openai": "^6.16.0",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",
