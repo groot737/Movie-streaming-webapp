@@ -87,6 +87,7 @@ function RoomWatchPage({ code = "" }) {
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
   const chatScrollRef = useRef(null);
+  const hasTrackedPresenceRef = useRef(false);
 
   useEffect(() => {
     voiceChatEnabledRef.current = voiceChatEnabled;
@@ -782,30 +783,52 @@ function RoomWatchPage({ code = "" }) {
     channel.on("presence", { event: "join" }, ({ newPresences }) => {
       newPresences.forEach((p) => {
         const name = p.name || "A user";
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            id: `system-join-${p.id || Math.random()}-${Date.now()}`,
-            name: "System",
-            message: `${name} joined the room`,
-            tone: "system-join",
-          },
-        ]);
+        setChatMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (
+            lastMsg &&
+            lastMsg.tone === "system-join" &&
+            lastMsg.message === `${name} joined the room` &&
+            Date.now() - (parseInt(lastMsg.id.split("-").pop()) || 0) < 5000
+          ) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              id: `system-join-${p.id || Math.random()}-${Date.now()}`,
+              name: "System",
+              message: `${name} joined the room`,
+              tone: "system-join",
+            },
+          ];
+        });
       });
     });
 
     channel.on("presence", { event: "leave" }, ({ leftPresences }) => {
       leftPresences.forEach((p) => {
         const name = p.name || "A user";
-        setChatMessages((prev) => [
-          ...prev,
-          {
-            id: `system-leave-${p.id || Math.random()}-${Date.now()}`,
-            name: "System",
-            message: `${name} left the room`,
-            tone: "system-leave",
-          },
-        ]);
+        setChatMessages((prev) => {
+          const lastMsg = prev[prev.length - 1];
+          if (
+            lastMsg &&
+            lastMsg.tone === "system-leave" &&
+            lastMsg.message === `${name} left the room` &&
+            Date.now() - (parseInt(lastMsg.id.split("-").pop()) || 0) < 5000
+          ) {
+            return prev;
+          }
+          return [
+            ...prev,
+            {
+              id: `system-leave-${p.id || Math.random()}-${Date.now()}`,
+              name: "System",
+              message: `${name} left the room`,
+              tone: "system-leave",
+            },
+          ];
+        });
       });
     });
 
@@ -818,14 +841,7 @@ function RoomWatchPage({ code = "" }) {
     channel.subscribe(async (status) => {
       if (status === "SUBSCRIBED") {
         setChannelReady(true);
-        // Only track if we have a real username (not the default "Guest")
-        // The useEffect below will handle tracking once displayName is loaded
-        if (displayName !== "Guest") {
-          await channel.track({
-            name: displayName,
-            id: clientIdRef.current,
-          });
-        }
+        // Presence tracking is handled by the useEffect below when displayName is ready
         channel.send({
           type: "broadcast",
           event: "state_request",
@@ -840,16 +856,18 @@ function RoomWatchPage({ code = "" }) {
       stopVoiceSession();
       channelRef.current = null;
       setChannelReady(false);
+      hasTrackedPresenceRef.current = false;
       supabase.removeChannel(channel);
     };
   }, [code, isHost, voiceChatAllowed]);
 
   useEffect(() => {
-    if (channelReady && channelRef.current && displayName) {
+    if (channelReady && channelRef.current && displayName && !hasTrackedPresenceRef.current) {
       channelRef.current.track({
         name: displayName,
         id: clientIdRef.current,
       });
+      hasTrackedPresenceRef.current = true;
     }
   }, [displayName, channelReady]);
 
@@ -985,15 +1003,7 @@ function RoomWatchPage({ code = "" }) {
       event: "chat",
       payload,
     });
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: payload.id,
-        name: payload.name,
-        message: payload.message,
-        tone: payload.tone,
-      },
-    ]);
+    // Message will be added via broadcast listener (self: true is enabled)
     setChatInput("");
   };
 
