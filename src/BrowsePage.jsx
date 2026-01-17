@@ -10,6 +10,7 @@ const API_BASE =
 const NAV_LINKS = [
   { label: "Home", href: "#" },
   { label: "Browse", href: "#browse" },
+  { label: "Join room", href: "#join-room", isAction: true },
 ];
 
 const MOVIE_CATEGORY_LABELS = {
@@ -124,6 +125,7 @@ function BrowsePage() {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
   const [currentUser, setCurrentUser] = useState(null);
+  const [showJoinRoomModal, setShowJoinRoomModal] = useState(false);
 
   const cacheRef = useRef({
     categories: {},
@@ -472,6 +474,10 @@ function BrowsePage() {
     setShowAuthModal(true);
   };
 
+  const handleOpenJoinRoom = () => {
+    setShowJoinRoomModal(true);
+  };
+
   const handleSignOut = async () => {
     setCurrentUser(null);
     try {
@@ -495,6 +501,7 @@ function BrowsePage() {
         onSearchChange={setSearchInput}
         onSignIn={() => handleOpenAuth("signin")}
         onSignOut={handleSignOut}
+        onJoinRoom={handleOpenJoinRoom}
         user={currentUser}
       />
 
@@ -550,8 +557,8 @@ function BrowsePage() {
                         key={option.id}
                         onClick={() => setSearchFilter(option.id)}
                         className={`px-3 py-1.5 rounded-full text-xs border transition ${searchFilter === option.id
-                            ? "bg-cyan-500 text-slate-950 border-cyan-400"
-                            : "border-slate-800 text-slate-300 hover:border-slate-600"
+                          ? "bg-cyan-500 text-slate-950 border-cyan-400"
+                          : "border-slate-800 text-slate-300 hover:border-slate-600"
                           }`}
                       >
                         {option.label}
@@ -654,11 +661,16 @@ function BrowsePage() {
           />
         )}
       </AnimatePresence>
+      <AnimatePresence>
+        {showJoinRoomModal && (
+          <JoinRoomModal onClose={() => setShowJoinRoomModal(false)} />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
 
-function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, user }) {
+function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, onJoinRoom, user }) {
   const [open, setOpen] = useState(false);
   const [showMobileSearch, setShowMobileSearch] = useState(false);
 
@@ -671,6 +683,12 @@ function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, user }) {
             <a
               key={link.href}
               href={link.href}
+              onClick={(e) => {
+                if (link.isAction) {
+                  e.preventDefault();
+                  onJoinRoom();
+                }
+              }}
               className="hover:text-slate-100 transition"
             >
               {link.label}
@@ -758,7 +776,13 @@ function Navbar({ searchInput, onSearchChange, onSignIn, onSignOut, user }) {
                   key={link.href}
                   href={link.href}
                   className="block text-sm text-slate-300"
-                  onClick={() => setOpen(false)}
+                  onClick={(e) => {
+                    if (link.isAction) {
+                      e.preventDefault();
+                      onJoinRoom();
+                    }
+                    setOpen(false);
+                  }}
                 >
                   {link.label}
                 </a>
@@ -1203,6 +1227,137 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
             {isSignIn
               ? "New here? Create an account"
               : "Already have an account? Sign in"}
+          </button>
+        </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function JoinRoomModal({ onClose }) {
+  const [roomCode, setRoomCode] = useState("");
+  const [error, setError] = useState("");
+  const [isChecking, setIsChecking] = useState(false);
+  const closeButtonRef = useRef(null);
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    closeButtonRef.current?.focus();
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    const trimmedCode = roomCode.trim().toUpperCase();
+
+    if (!trimmedCode) {
+      setError("Room code is required.");
+      return;
+    }
+
+    setError("");
+    setIsChecking(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/rooms/code/${trimmedCode}`, {
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        setError(data?.message || "Room not found.");
+        return;
+      }
+
+      // Room exists, redirect to room-watch page
+      window.location.hash = `#room-watch?code=${trimmedCode}`;
+      onClose();
+    } catch (err) {
+      setError("Network error. Please try again.");
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/95 p-6 shadow-2xl"
+      >
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-semibold">Join Room</h2>
+          <button
+            ref={closeButtonRef}
+            onClick={onClose}
+            className="h-8 w-8 rounded-lg border border-slate-800 flex items-center justify-center hover:border-slate-600 transition"
+            aria-label="Close"
+          >
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <label className="text-sm text-slate-300" htmlFor="room-code">
+              Enter room code
+            </label>
+            <input
+              id="room-code"
+              type="text"
+              autoComplete="off"
+              autoFocus
+              required
+              value={roomCode}
+              onChange={(e) => {
+                setRoomCode(e.target.value.toUpperCase());
+                setError("");
+              }}
+              placeholder="XXXXXX"
+              maxLength={6}
+              className="w-full rounded-lg border border-slate-800 bg-slate-950/60 px-4 py-3 text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 uppercase tracking-widest text-center text-lg font-mono"
+            />
+          </div>
+
+          {error && (
+            <div className="text-sm text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2">
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isChecking}
+            className="w-full px-4 py-3 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {isChecking ? "Checking..." : "Join Room"}
           </button>
         </form>
       </motion.div>
