@@ -25,6 +25,12 @@ const tmdbClient = {
   getRoomByCode: async (code, signal) => {
     return fetchApiJson(`/api/rooms/code/${code}`, signal);
   },
+  getSeason: async (tvId, seasonNumber, signal) => {
+    return fetchApiJson(
+      `/api/tmdb/season/${tvId}/${seasonNumber}`,
+      signal
+    );
+  },
 };
 
 const fadeUp = {
@@ -60,8 +66,12 @@ function RoomWatchPage({ code = "" }) {
   const [micStatus, setMicStatus] = useState("idle");
   const [micError, setMicError] = useState("");
   const [voicePeers, setVoicePeers] = useState(0);
-  const [selectedSeason] = useState(1);
-  const [selectedEpisode] = useState(1);
+
+  const [selectedSeason, setSelectedSeason] = useState(1);
+  const [selectedEpisode, setSelectedEpisode] = useState(1);
+  const [episodes, setEpisodes] = useState([]);
+  const [seasonLoading, setSeasonLoading] = useState(false);
+  const [seasonError, setSeasonError] = useState("");
   const [isAudioBlocked, setIsAudioBlocked] = useState(false);
   const [isRoomClosed, setIsRoomClosed] = useState(false);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
@@ -70,6 +80,7 @@ function RoomWatchPage({ code = "" }) {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
   const abortRef = useRef(null);
+  const seasonAbortRef = useRef(null);
   const channelRef = useRef(null);
   const roomPausedRef = useRef(false);
   const localStreamRef = useRef(null);
@@ -221,6 +232,53 @@ function RoomWatchPage({ code = "" }) {
 
     return () => controller.abort();
   }, [code, currentUser]);
+
+  useEffect(() => {
+    if (mediaType !== "tv" || !details?.seasons?.length) {
+      setEpisodes([]);
+      setSeasonError("");
+      return;
+    }
+    const seasonNumber = details.seasons.find(
+      (season) => season.season_number === selectedSeason
+    )
+      ? selectedSeason
+      : details.seasons[0].season_number;
+
+    // If the currently selected season doesn't exist in the details (e.g. initial load),
+    // we should update it to the first available season.
+    // However, we avoid immediate state update loops by checking logic first.
+    // Ideally we want to sync them.
+
+    if (seasonAbortRef.current) {
+      seasonAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    seasonAbortRef.current = controller;
+    setSeasonLoading(true);
+    setSeasonError("");
+
+    const run = async () => {
+      try {
+        const data = await tmdbClient.getSeason(
+          mediaId,
+          seasonNumber,
+          controller.signal
+        );
+        setEpisodes(data?.episodes || []);
+      } catch (err) {
+        if (err.name !== "AbortError") {
+          setSeasonError(err.message || "Unable to load episodes.");
+        }
+      } finally {
+        setSeasonLoading(false);
+      }
+    };
+
+    run();
+
+    return () => controller.abort();
+  }, [mediaId, mediaType, selectedSeason, details]);
 
   useEffect(() => {
     roomPausedRef.current = roomPaused;
@@ -832,6 +890,43 @@ function RoomWatchPage({ code = "" }) {
       });
     });
 
+    channel.on("broadcast", { event: "media_change" }, (payload) => {
+      const data = payload?.payload || {};
+      if (data.mediaType === "tv") {
+        if (data.season) setSelectedSeason(Number(data.season));
+        if (data.episode) setSelectedEpisode(Number(data.episode));
+      }
+
+      const name = data.name || "A user";
+      const season = data.season;
+      const episode = data.episode;
+
+      setChatMessages((prev) => {
+        const newMessage = `${name} changed to Season ${season} Episode ${episode}`;
+        const lastMsg = prev[prev.length - 1];
+        // Check if the last message is identical and recent (deduplication)
+        // using timestamp from ID (format: system-media-TIMESTAMP-RANDOM)
+        if (
+          lastMsg &&
+          lastMsg.tone === "system-join" &&
+          lastMsg.message === newMessage &&
+          Date.now() - (parseInt(lastMsg.id.split("-")[2] || "0")) < 2000
+        ) {
+          return prev;
+        }
+
+        return [
+          ...prev,
+          {
+            id: `system-media-${Date.now()}-${Math.random()}`,
+            name: "System",
+            message: newMessage,
+            tone: "system-join",
+          },
+        ];
+      });
+    });
+
     channel.on("broadcast", { event: "room_closed" }, () => {
       if (!isHost) {
         setIsRoomClosed(true);
@@ -912,6 +1007,55 @@ function RoomWatchPage({ code = "" }) {
   const poster = details?.poster_path
     ? `${POSTER_BASE}${details.poster_path}`
     : null;
+
+  // --- Start TV Show Dropdown Logic ---
+  const seasonOptions =
+    details?.seasons?.filter((season) => season.season_number > 0) || [];
+
+  // --- Handlers for TV Dropdowns with Broadcast ---
+
+  const broadcastMediaChange = (newSeason, newEpisode) => {
+    if (!channelRef.current) return;
+
+    // Optimistic / Local update for chat
+    const name = displayName || (isHost ? "Host" : "Guest");
+    setChatMessages((prev) => [
+      ...prev,
+      {
+        id: `system-media-${Date.now()}-${Math.random()}`,
+        name: "System",
+        message: `${name} changed to Season ${newSeason} Episode ${newEpisode}`,
+        tone: "system-join",
+      },
+    ]);
+
+    channelRef.current.send({
+      type: "broadcast",
+      event: "media_change",
+      payload: {
+        from: clientIdRef.current,
+        name: name,
+        mediaType: "tv",
+        season: newSeason,
+        episode: newEpisode
+      }
+    });
+  };
+
+  const handleSeasonChange = (e) => {
+    const newSeason = Number(e.target.value);
+    setSelectedSeason(newSeason);
+    // Reset episode to 1 when changing season
+    setSelectedEpisode(1);
+    broadcastMediaChange(newSeason, 1);
+  };
+
+  const handleEpisodeChange = (e) => {
+    const newEpisode = Number(e.target.value);
+    setSelectedEpisode(newEpisode);
+    broadcastMediaChange(selectedSeason, newEpisode);
+  };
+  // --- End TV Show Dropdown Logic ---
   const playerUrl =
     mediaId && mediaType === "tv"
       ? `https://vidsrc.cc/v2/embed/tv/${mediaId}/${selectedSeason}/${selectedEpisode}`
@@ -1037,17 +1181,17 @@ function RoomWatchPage({ code = "" }) {
 
       <main className="relative max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-10 pt-2 pb-8">
         <div className="grid gap-10 lg:grid-cols-[2.5fr_0.5fr]">
-          <section className={`space-y-6 transition-all duration-500 ${isTheaterMode ? "lg:col-span-2" : ""}`}>
+          <section className={`space-y-6 transition-all duration-500 flex flex-col ${isTheaterMode ? "lg:col-span-2" : ""}`}>
             <motion.div
               initial="hidden"
               animate="show"
               variants={fadeUp}
-              className="relative group pr-0"
+              className="relative group pr-0 flex-1"
             >
               {/* Ambient Glow */}
               <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-blue-500/20 rounded-2xl blur-3xl opacity-0 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 pointer-events-none hidden lg:block" />
 
-              <div className="relative rounded-2xl lg:rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl flex flex-col-reverse lg:flex-col">
+              <div className="relative rounded-2xl lg:rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl flex flex-col-reverse lg:flex-col h-full">
                 <div className="flex items-center justify-between px-4 lg:px-6 py-3 lg:py-4 border-t lg:border-t-0 lg:border-b border-slate-800/50 bg-slate-900/40 backdrop-blur-md">
                   <div className="flex items-center gap-4">
                     <button
@@ -1071,6 +1215,43 @@ function RoomWatchPage({ code = "" }) {
                   </div>
 
                   <div className="flex items-center gap-3">
+                    {mediaType === "tv" && (
+                      <div className="hidden lg:flex items-center gap-2 mr-2">
+                        <div className="relative">
+                          <select
+                            value={selectedSeason}
+                            onChange={handleSeasonChange}
+                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-20 text-center"
+                          >
+                            {seasonOptions.map((season) => (
+                              <option key={season.id} value={season.season_number}>
+                                S{season.season_number}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="relative">
+                          <select
+                            value={selectedEpisode}
+                            onChange={handleEpisodeChange}
+                            disabled={seasonLoading || episodes.length === 0}
+                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-20 text-center disabled:opacity-50"
+                          >
+                            {seasonLoading ? (
+                              <option>...</option>
+                            ) : episodes.length === 0 ? (
+                              <option>NA</option>
+                            ) : (
+                              episodes.map((episode) => (
+                                <option key={episode.id} value={episode.episode_number}>
+                                  E{episode.episode_number}
+                                </option>
+                              ))
+                            )}
+                          </select>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex bg-slate-800/50 rounded-full p-1 border border-slate-700/50">
                       {isHost && (
                         <>
@@ -1122,7 +1303,7 @@ function RoomWatchPage({ code = "" }) {
                   </div>
                 </div>
 
-                <div className="relative aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700">
+                <div className="relative aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700 flex-1">
                   {playerUrl ? (
                     <div className="relative h-full w-full">
                       <iframe
@@ -1184,76 +1365,10 @@ function RoomWatchPage({ code = "" }) {
                 Details
               </button>
             </div>
-
-            <div className={`rounded-3xl border border-slate-800/50 bg-slate-900/40 backdrop-blur-xl p-6 lg:p-8 transition-all duration-500 overflow-hidden relative group/meta ${isTheaterMode ? "opacity-20 lg:hover:opacity-100 lg:scale-95 origin-top" : "opacity-100 scale-100"} ${activeTab !== 'details' ? 'hidden lg:block' : 'block'}`}>
-              {/* Decorative background element */}
-              <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 blur-[100px] rounded-full pointer-events-none" />
-
-              {!loading && !error && (
-                <div className="flex flex-wrap gap-8 items-start relative z-10">
-                  <div className="w-[140px] shrink-0 rounded-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-slate-700/50 group/poster">
-                    {poster ? (
-                      <img
-                        src={poster}
-                        alt={title}
-                        className="w-full h-auto transition-transform duration-700 group-hover/poster:scale-110"
-                      />
-                    ) : (
-                      <div className="aspect-[2/3] bg-slate-800 flex items-center justify-center text-[10px] text-slate-500">
-                        No poster
-                      </div>
-                    )}
-                  </div>
-                  <div className="space-y-4 flex-1 min-w-[200px]">
-                    <div>
-                      <h1 className="text-2xl lg:text-4xl font-black text-white tracking-tighter leading-tight mb-2">
-                        {title}
-                      </h1>
-                      <div className="flex flex-wrap items-center gap-2 lg:gap-3">
-                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-widest">
-                          {mediaType}
-                        </span>
-                        <span className="text-xs font-bold text-slate-500">
-                          {year || "----"}
-                        </span>
-                        <span className="hidden sm:block h-1 w-1 rounded-full bg-slate-800" />
-                        <span className="text-xs font-bold text-slate-500">
-                          {details?.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : "Duration N/A"}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="text-base italic text-slate-300 font-medium leading-relaxed max-w-2xl border-l-2 border-cyan-500/30 pl-4">
-                      "{details?.tagline || "Watching together with friends."}"
-                    </div>
-
-                    <div className="flex flex-wrap gap-2 pt-2">
-                      {details?.genres?.map(g => (
-                        <span key={g.id} className="px-3.5 py-1.5 rounded-xl text-[10px] font-bold bg-slate-800/80 text-slate-300 border border-slate-700/50 uppercase tracking-tighter">
-                          {g.name}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {!loading && !error && (
-                <div className="mt-8 pt-6 lg:pt-8 border-t border-slate-800/50 relative z-10">
-                  <div className="flex items-center gap-2 mb-4">
-                    <span className="h-0.5 w-4 lg:w-6 bg-cyan-500 rounded-full" />
-                    <h3 className="text-[10px] uppercase tracking-[0.3em] font-black text-slate-500">The Story</h3>
-                  </div>
-                  <p className="text-sm lg:text-base text-slate-300 leading-relaxed max-w-4xl font-medium antialiased">
-                    {details?.overview || "No overview available for this title."}
-                  </p>
-                </div>
-              )}
-            </div>
           </section>
 
-          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'}`}>
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-[450px] sm:h-[500px] lg:h-[600px] overflow-hidden shadow-2xl">
+          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-full`}>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-full overflow-hidden shadow-2xl min-h-[450px]">
               <div className="px-6 py-4 border-b border-slate-800/50 bg-slate-900/60 flex items-center justify-between">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-500">
@@ -1320,6 +1435,73 @@ function RoomWatchPage({ code = "" }) {
             </div>
           </aside>
         </div>
+
+        {/* Details Section Moved Below Grid */}
+        <div className={`mt-10 rounded-3xl border border-slate-800/50 bg-slate-900/40 backdrop-blur-xl p-6 lg:p-8 transition-all duration-500 overflow-hidden relative group/meta w-full max-w-[1720px] mx-auto ${isTheaterMode ? "opacity-20 lg:hover:opacity-100 origin-top" : "opacity-100"} ${activeTab !== 'details' ? 'hidden lg:block' : 'block'}`}>
+          {/* Decorative background element */}
+          <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 blur-[100px] rounded-full pointer-events-none" />
+
+          {!loading && !error && (
+            <div className="flex flex-wrap gap-8 items-start relative z-10">
+              <div className="w-[140px] shrink-0 rounded-2xl overflow-hidden shadow-[0_20px_50px_rgba(0,0,0,0.6)] border border-slate-700/50 group/poster">
+                {poster ? (
+                  <img
+                    src={poster}
+                    alt={title}
+                    className="w-full h-auto transition-transform duration-700 group-hover/poster:scale-110"
+                  />
+                ) : (
+                  <div className="aspect-[2/3] bg-slate-800 flex items-center justify-center text-[10px] text-slate-500">
+                    No poster
+                  </div>
+                )}
+              </div>
+              <div className="space-y-4 flex-1 min-w-[200px]">
+                <div>
+                  <h1 className="text-2xl lg:text-4xl font-black text-white tracking-tighter leading-tight mb-2">
+                    {title}
+                  </h1>
+                  <div className="flex flex-wrap items-center gap-2 lg:gap-3">
+                    <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 uppercase tracking-widest">
+                      {mediaType}
+                    </span>
+                    <span className="text-xs font-bold text-slate-500">
+                      {year || "----"}
+                    </span>
+                    <span className="hidden sm:block h-1 w-1 rounded-full bg-slate-800" />
+                    <span className="text-xs font-bold text-slate-500">
+                      {details?.runtime ? `${Math.floor(details.runtime / 60)}h ${details.runtime % 60}m` : "Duration N/A"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="text-base italic text-slate-300 font-medium leading-relaxed max-w-2xl border-l-2 border-cyan-500/30 pl-4">
+                  "{details?.tagline || "Watching together with friends."}"
+                </div>
+
+                <div className="flex flex-wrap gap-2 pt-2">
+                  {details?.genres?.map(g => (
+                    <span key={g.id} className="px-3.5 py-1.5 rounded-xl text-[10px] font-bold bg-slate-800/80 text-slate-300 border border-slate-700/50 uppercase tracking-tighter">
+                      {g.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!loading && !error && (
+            <div className="mt-8 pt-6 lg:pt-8 border-t border-slate-800/50 relative z-10">
+              <div className="flex items-center gap-2 mb-4">
+                <span className="h-0.5 w-4 lg:w-6 bg-cyan-500 rounded-full" />
+                <h3 className="text-[10px] uppercase tracking-[0.3em] font-black text-slate-500">The Story</h3>
+              </div>
+              <p className="text-sm lg:text-base text-slate-300 leading-relaxed max-w-4xl font-medium antialiased">
+                {details?.overview || "No overview available for this title."}
+              </p>
+            </div>
+          )}
+        </div>
       </main>
 
       <AnimatePresence>
@@ -1379,7 +1561,7 @@ function RoomWatchPage({ code = "" }) {
         )}
       </AnimatePresence>
       <div ref={remoteAudioContainerRef} className="sr-only" />
-    </div>
+    </div >
   );
 }
 
