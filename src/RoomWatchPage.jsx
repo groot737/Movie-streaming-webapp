@@ -1354,7 +1354,7 @@ function RoomWatchPage({ code = "" }) {
             </div>
           </section>
 
-          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-full`}>
+          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-[600px] lg:h-0 lg:min-h-full`}>
             <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-full overflow-hidden shadow-2xl min-h-[450px]">
               <div className="px-6 py-4 border-b border-slate-800/50 bg-slate-900/60 flex items-center justify-between">
                 <div>
