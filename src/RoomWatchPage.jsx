@@ -59,7 +59,7 @@ function RoomWatchPage({ code = "" }) {
   const [roomId, setRoomId] = useState(null);
   const [roomCode, setRoomCode] = useState("");
   const [isHost, setIsHost] = useState(false);
-  const [displayName, setDisplayName] = useState("Guest");
+  const [displayName, setDisplayName] = useState(null);
   const [shareMessage, setShareMessage] = useState("");
   const [hostError, setHostError] = useState("");
   const [roomPaused, setRoomPaused] = useState(false);
@@ -78,6 +78,7 @@ function RoomWatchPage({ code = "" }) {
   const [activeTab, setActiveTab] = useState("chat"); // 'chat' or 'details'
   const [currentUser, setCurrentUser] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
   const abortRef = useRef(null);
   const seasonAbortRef = useRef(null);
@@ -156,6 +157,7 @@ function RoomWatchPage({ code = "" }) {
     setRoomId(null);
     setRoomCode("");
     setIsHost(false);
+    setDisplayName(null);
     setShareMessage("");
     setHostError("");
     setRoomPaused(false);
@@ -957,12 +959,19 @@ function RoomWatchPage({ code = "" }) {
   }, [code, isHost, voiceChatAllowed]);
 
   useEffect(() => {
+    // Only track if displayName is set (and strictly not null)
+    // The previous initialization was "Guest", now it is null to wait for profile.
     if (channelReady && channelRef.current && displayName && !hasTrackedPresenceRef.current) {
       channelRef.current.track({
         name: displayName,
         id: clientIdRef.current,
       });
       hasTrackedPresenceRef.current = true;
+
+      // Also join voice chat if enabled (moved from subscribe to ensure name is ready)
+      if (voiceChatEnabledRef.current) {
+        sendVoiceJoin();
+      }
     }
   }, [displayName, channelReady]);
 
@@ -1072,28 +1081,7 @@ function RoomWatchPage({ code = "" }) {
   );
 
   const handleShare = async () => {
-    if (!roomCode) return;
-    const url = `${window.location.origin}${window.location.pathname}#room-watch?code=${roomCode}`;
-    try {
-      if (navigator?.clipboard?.writeText) {
-        await navigator.clipboard.writeText(url);
-      } else {
-        const textarea = document.createElement("textarea");
-        textarea.value = url;
-        textarea.setAttribute("readonly", "true");
-        textarea.style.position = "absolute";
-        textarea.style.left = "-9999px";
-        document.body.appendChild(textarea);
-        textarea.select();
-        document.execCommand("copy");
-        document.body.removeChild(textarea);
-      }
-      setShareMessage("Copied");
-      setTimeout(() => setShareMessage(""), 1500);
-    } catch (err) {
-      setShareMessage("Copy failed");
-      setTimeout(() => setShareMessage(""), 1500);
-    }
+    setShowShareModal(true);
   };
 
   const handleTogglePause = () => {
@@ -1505,6 +1493,15 @@ function RoomWatchPage({ code = "" }) {
       </main>
 
       <AnimatePresence>
+        {showShareModal && (
+          <ShareModal
+            roomCode={roomCode}
+            onClose={() => setShowShareModal(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {loading && (
           <motion.div
             initial={{ opacity: 0 }}
@@ -1888,6 +1885,115 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
               : "Already have an account? Sign in"}
           </button>
         </form>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function ShareModal({ roomCode, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const shareUrl = `${window.location.origin}${window.location.pathname}#room-watch?code=${roomCode}`;
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const handleCopy = async () => {
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = shareUrl;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Failed to copy:", err);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.95, opacity: 0, y: 10 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.95, opacity: 0, y: 10 }}
+        className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-900/50">
+          <h3 className="text-sm font-bold text-slate-200">Share Room</h3>
+          <button
+            onClick={onClose}
+            className="text-slate-400 hover:text-white transition"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <div className="space-y-2 text-center">
+            <div className="text-xs font-medium text-slate-500 uppercase tracking-widest">
+              Room Code
+            </div>
+            <div className="text-3xl font-black text-white tracking-widest font-mono select-all">
+              {roomCode}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="text-xs font-medium text-slate-500 uppercase tracking-widest text-center mb-1">
+              Share Link
+            </div>
+            <button
+              onClick={handleCopy}
+              className={`w-full py-3 rounded-xl font-bold text-sm transition-all duration-300 flex items-center justify-center gap-2 ${copied
+                ? "bg-emerald-500 text-emerald-950 shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                : "bg-cyan-500 text-cyan-950 hover:bg-cyan-400 shadow-[0_0_20px_rgba(6,182,212,0.3)]"
+                }`}
+            >
+              {copied ? (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" />
+                    <polyline points="16 6 12 2 8 6" />
+                    <line x1="12" y1="2" x2="12" y2="15" />
+                  </svg>
+                  Copy Link
+                </>
+              )}
+            </button>
+            <p className="text-[10px] text-center text-slate-500">
+              Anyone with this link can join your room.
+            </p>
+          </div>
+        </div>
       </motion.div>
     </motion.div>
   );
