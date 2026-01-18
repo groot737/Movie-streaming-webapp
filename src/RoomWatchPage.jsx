@@ -1180,8 +1180,8 @@ function RoomWatchPage({ code = "" }) {
               <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-blue-500/20 rounded-2xl blur-3xl opacity-0 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 pointer-events-none hidden lg:block" />
 
               <div className="relative rounded-2xl lg:rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl flex flex-col-reverse lg:flex-col h-full">
-                <div className="flex items-center justify-between px-4 lg:px-6 py-3 lg:py-4 border-t lg:border-t-0 lg:border-b border-slate-800/50 bg-slate-900/40 backdrop-blur-md">
-                  <div className="flex items-center gap-4">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between items-start gap-4 px-4 lg:px-6 py-3 lg:py-4 border-t lg:border-t-0 lg:border-b border-slate-800/50 bg-slate-900/40 backdrop-blur-md">
+                  <div className="flex items-center gap-4 w-full lg:w-auto">
                     <button
                       onClick={() => setIsTheaterMode(!isTheaterMode)}
                       className={`hidden lg:flex h-8 w-8 rounded-lg border items-center justify-center transition-all ${isTheaterMode ? "bg-cyan-500 border-cyan-400 text-slate-950" : "border-slate-700 text-slate-400 hover:text-slate-200"}`}
@@ -1196,20 +1196,20 @@ function RoomWatchPage({ code = "" }) {
                       <div className="text-[10px] uppercase tracking-[0.3em] font-bold text-cyan-500/80">
                         {roomTitle}
                       </div>
-                      <div className="text-sm font-bold text-slate-100 mt-0.5 tracking-tight">
+                      <div className="text-xl sm:text-2xl lg:text-sm font-black text-slate-100 mt-1 tracking-tight truncate max-w-[250px] sm:max-w-md lg:max-w-none">
                         {title}
                       </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="w-full lg:w-auto flex flex-wrap items-center justify-start lg:justify-end gap-2">
                     {mediaType === "tv" && (
-                      <div className="hidden lg:flex items-center gap-2 mr-2">
+                      <div className="flex items-center gap-2 mr-1">
                         <div className="relative">
                           <select
                             value={selectedSeason}
                             onChange={handleSeasonChange}
-                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-20 text-center"
+                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-2 py-1 lg:px-3 lg:py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-16 lg:w-20 text-center h-8 flex items-center justify-center"
                           >
                             {seasonOptions.map((season) => (
                               <option key={season.id} value={season.season_number}>
@@ -1223,7 +1223,7 @@ function RoomWatchPage({ code = "" }) {
                             value={selectedEpisode}
                             onChange={handleEpisodeChange}
                             disabled={seasonLoading || episodes.length === 0}
-                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-3 py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-20 text-center disabled:opacity-50"
+                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-2 py-1 lg:px-3 lg:py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-16 lg:w-20 text-center disabled:opacity-50 h-8 flex items-center justify-center"
                           >
                             {seasonLoading ? (
                               <option>...</option>
@@ -1240,38 +1240,37 @@ function RoomWatchPage({ code = "" }) {
                         </div>
                       </div>
                     )}
+
                     <div className="flex bg-slate-800/50 rounded-full p-1 border border-slate-700/50">
                       {isHost && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={handleTogglePause}
-                            className="h-8 px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
-                          >
-                            {roomPaused ? "Resume" : "Pause"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleShare}
-                            className="h-8 px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
-                          >
-                            {shareMessage ? shareMessage : "Share"}
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={handleTogglePause}
+                          className="h-8 px-3 lg:px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
+                        >
+                          {roomPaused ? "Resume" : "Pause"}
+                        </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={handleShare}
+                        className="h-8 px-3 lg:px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
+                      >
+                        {shareMessage ? shareMessage : "Share"}
+                      </button>
                     </div>
 
                     {isHost && (
                       <button
                         type="button"
                         onClick={handleCloseRoom}
-                        className="h-9 px-4 rounded-xl border border-rose-500/20 bg-rose-500/10 text-[10px] uppercase tracking-wider font-bold text-rose-400 hover:bg-rose-500 hover:text-white transition-all"
+                        className="h-8 lg:h-9 px-3 lg:px-4 rounded-xl border border-rose-500/20 bg-rose-500/10 text-[10px] uppercase tracking-wider font-bold text-rose-400 hover:bg-rose-500 hover:text-white transition-all whitespace-nowrap"
                       >
-                        End Session
+                        End
                       </button>
                     )}
 
-                    <div className="h-4 w-px bg-slate-800 mx-1" />
+                    <div className="hidden sm:block h-4 w-px bg-slate-800 mx-1" />
 
                     <button
                       type="button"
@@ -1280,7 +1279,7 @@ function RoomWatchPage({ code = "" }) {
                         setVoiceChatEnabled((prev) => !prev);
                       }}
                       disabled={!voiceChatAllowed}
-                      className={`h-9 w-9 rounded-xl border text-xs transition-all flex items-center justify-center ${voiceChatEnabled
+                      className={`h-8 w-8 lg:h-9 lg:w-9 rounded-xl border text-[10px] lg:text-xs transition-all flex items-center justify-center shrink-0 ${voiceChatEnabled
                         ? "border-cyan-400 bg-cyan-500 text-slate-950 shadow-[0_0_15px_rgba(34,211,238,0.4)]"
                         : "border-slate-700 bg-slate-800/50 text-slate-400 hover:border-slate-500"
                         } ${voiceChatAllowed ? "" : "opacity-30 cursor-not-allowed"}`}
@@ -1291,7 +1290,7 @@ function RoomWatchPage({ code = "" }) {
                   </div>
                 </div>
 
-                <div className="relative aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700 flex-1">
+                <div className="relative w-full h-[40vh] sm:h-auto sm:aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700 flex-1">
                   {playerUrl ? (
                     <div className="relative h-full w-full">
                       <iframe
