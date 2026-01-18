@@ -168,9 +168,9 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
   const imdbId = details?.imdb_id;
   const playerUrl =
     mediaType === "tv"
-      ? `https://vidsrc-embed.ru/embed/tv?tmdb=${mediaId}&season=${selectedSeason}&episode=${selectedEpisode}`
+      ? `https://vidsrc.cc/v2/embed/tv/${mediaId}/${selectedSeason}/${selectedEpisode}`
       : imdbId
-        ? `https://vidsrc-embed.ru/embed/movie/${imdbId}`
+        ? `https://vidsrc.cc/v2/embed/movie/${imdbId}`
         : "";
   const seasonOptions =
     details?.seasons?.filter((season) => season.season_number > 0) || [];
@@ -254,6 +254,8 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
                         src={playerUrl}
                         className="h-full w-full"
                         frameBorder="0"
+                        sandbox="allow-scripts allow-same-origin allow-presentation"
+                        allow="autoplay; fullscreen"
                         allowFullScreen
                       />
                     ) : (
