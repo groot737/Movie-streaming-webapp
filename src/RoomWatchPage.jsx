@@ -736,10 +736,13 @@ function RoomWatchPage({ code = "" }) {
       if (mediaTypeFromSync === "tv") {
         const season = payload?.payload?.season;
         const episode = payload?.payload?.episode;
+        console.log('📺 Received state_sync for TV:', { season, episode, from, mediaTypeFromSync });
         if (typeof season === "number") {
+          console.log('✅ Setting season to:', season);
           setSelectedSeason(season);
         }
         if (typeof episode === "number") {
+          console.log('✅ Setting episode to:', episode);
           setSelectedEpisode(episode);
         }
       }
