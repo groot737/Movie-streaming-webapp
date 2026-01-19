@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { supabase } from "./supabaseClient.js";
+import VideoPlayer from "./VideoPlayer";
 
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
@@ -100,6 +101,7 @@ function RoomWatchPage({ code = "" }) {
   const [chatInput, setChatInput] = useState("");
   const chatScrollRef = useRef(null);
   const hasTrackedPresenceRef = useRef(false);
+  const [streamUrl, setStreamUrl] = useState(null);
 
   useEffect(() => {
     voiceChatEnabledRef.current = voiceChatEnabled;
@@ -260,6 +262,31 @@ function RoomWatchPage({ code = "" }) {
     setEpisodes(seasonEps);
 
   }, [mediaType, selectedSeason, details]);
+
+  useEffect(() => {
+    if (!details || !mediaId) return;
+
+    const fetchStream = async () => {
+      setStreamUrl(null);
+
+      if (mediaType === 'movie') {
+        // For movies, use the custom streaming endpoint with media_id
+        const streamingUrl = `https://p01--streaming-link--gkhzsvnjqjk8.code.run/m3u8?mediaId=${mediaId}`;
+        setStreamUrl(streamingUrl);
+      } else {
+        // For TV shows, find the episode and use custom endpoint with episodeId
+        const ep = details.episodes?.find(e => e.season === selectedSeason && e.number === selectedEpisode);
+        const episodeId = ep?.id;
+
+        if (episodeId) {
+          const streamingUrl = `https://p01--streaming-link--gkhzsvnjqjk8.code.run/m3u8?mediaId=${mediaId}&episodeId=${episodeId}`;
+          setStreamUrl(streamingUrl);
+        }
+      }
+    };
+
+    fetchStream();
+  }, [details, mediaType, selectedSeason, selectedEpisode, mediaId]);
 
   useEffect(() => {
     roomPausedRef.current = roomPaused;
@@ -1269,20 +1296,15 @@ function RoomWatchPage({ code = "" }) {
                 </div>
 
                 <div className="relative w-full h-[40vh] sm:h-auto sm:aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700 flex-1">
-                  {playerUrl ? (
+                  {streamUrl ? (
                     <div className="relative h-full w-full">
-                      <iframe
-                        title="Player"
-                        src={playerUrl}
-                        className="h-full w-full"
-                        frameBorder="0"
-                        sandbox="allow-scripts allow-same-origin allow-presentation"
-                        allow="autoplay; fullscreen"
-                        allowFullScreen
+                      <VideoPlayer
+                        src={streamUrl}
+                        poster={poster}
                       />
 
                       {roomPaused && (
-                        <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-6">
+                        <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-6 z-10 pointer-events-none">
                           <div className="w-16 h-16 rounded-full bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-500 mb-4 animate-pulse">
                             <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                               <rect x="6" y="4" width="4" height="16" />
@@ -1443,8 +1465,8 @@ function RoomWatchPage({ code = "" }) {
                 </div>
 
                 <div className="flex flex-wrap gap-2 pt-2">
-                  {details?.genres?.map(g => (
-                    <span key={g.id} className="px-3.5 py-1.5 rounded-xl text-[10px] font-bold bg-slate-800/80 text-slate-300 border border-slate-700/50 uppercase tracking-tighter">
+                  {details?.genres?.map((g, idx) => (
+                    <span key={g.id || idx} className="px-3.5 py-1.5 rounded-xl text-[10px] font-bold bg-slate-800/80 text-slate-300 border border-slate-700/50 uppercase tracking-tighter">
                       {g.name}
                     </span>
                   ))}
