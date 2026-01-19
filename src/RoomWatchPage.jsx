@@ -102,6 +102,7 @@ function RoomWatchPage({ code = "" }) {
   const chatScrollRef = useRef(null);
   const hasTrackedPresenceRef = useRef(false);
   const [streamUrl, setStreamUrl] = useState(null);
+  const audioContextRef = useRef(null);
 
   // Video player synchronization state
   const [playerShouldPlay, setPlayerShouldPlay] = useState(null);
@@ -354,42 +355,75 @@ function RoomWatchPage({ code = "" }) {
     if (!audioEl) {
       audioEl = document.createElement("audio");
       audioEl.autoplay = true;
-      audioEl.playsInline = true;
+      audioEl.playsinline = true; // Fixed: lowercase for mobile compatibility
       audioEl.muted = false;
       audioEl.volume = 1;
       audioEl.setAttribute("data-peer", peerId);
+      audioEl.setAttribute("playsinline", ""); // Add as attribute for better compatibility
       remoteAudioContainerRef.current.appendChild(audioEl);
       remoteAudioRef.current.set(peerId, audioEl);
     }
 
-    // Set srcObject and handle playback
+    // Set srcObject
     if (audioEl.srcObject !== stream) {
       audioEl.srcObject = stream;
     }
 
-    // Ensure audio plays with better error handling
+    // Initialize AudioContext on first stream (required for mobile)
+    if (!audioContextRef.current && typeof AudioContext !== 'undefined') {
+      try {
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+      } catch (err) {
+        console.warn("Failed to create AudioContext:", err);
+      }
+    }
+
+    // Resume AudioContext if suspended (mobile requirement)
+    if (audioContextRef.current?.state === 'suspended') {
+      audioContextRef.current.resume().catch(err => {
+        console.warn("Failed to resume AudioContext:", err);
+      });
+    }
+
+    // Improved playback with better error handling
     const playAudio = async () => {
       try {
+        // Resume AudioContext first if needed
+        if (audioContextRef.current?.state === 'suspended') {
+          await audioContextRef.current.resume();
+        }
+
         await audioEl.play();
+        console.log(`Audio playing for peer ${peerId}`);
       } catch (err) {
-        // Broadly detect autoplay/interaction issues
-        if (err.name === "NotAllowedError" || err.name === "NotSupportedError") {
+        console.warn(`Audio playback failed for peer ${peerId}:`, err);
+
+        // Set blocked state for any playback failure
+        if (err.name === "NotAllowedError" ||
+          err.name === "NotSupportedError" ||
+          err.message.includes("play")) {
           setIsAudioBlocked(true);
         }
-        // Retry after a short delay if autoplay fails
-        setTimeout(() => {
-          audioEl.play().catch(() => {
-            console.warn(`Failed to play audio for peer ${peerId}`);
-            setIsAudioBlocked(true);
-          });
-        }, 100);
+
+        // Don't retry automatically - wait for user interaction
       }
     };
+
     playAudio();
   };
 
   const handleUnmuteAll = async () => {
     setIsAudioBlocked(false);
+
+    // Resume AudioContext first
+    if (audioContextRef.current?.state === 'suspended') {
+      try {
+        await audioContextRef.current.resume();
+      } catch (err) {
+        console.error("Failed to resume AudioContext:", err);
+      }
+    }
+
     const audioEls = Array.from(remoteAudioRef.current.values());
     for (const el of audioEls) {
       try {
@@ -1002,12 +1036,13 @@ function RoomWatchPage({ code = "" }) {
       });
       hasTrackedPresenceRef.current = true;
 
-      // Also join voice chat if enabled (moved from subscribe to ensure name is ready)
-      if (voiceChatEnabledRef.current) {
+      // ALWAYS join voice session to receive audio (if voice chat is allowed)
+      // Mic state only controls sending, not receiving
+      if (voiceChatAllowed) {
         sendVoiceJoin();
       }
     }
-  }, [displayName, channelReady]);
+  }, [displayName, channelReady, voiceChatAllowed]);
 
   useEffect(() => {
     if (!isHost || !channelRef.current) return;
@@ -1018,14 +1053,7 @@ function RoomWatchPage({ code = "" }) {
     });
   }, [isHost, roomPaused]);
 
-  useEffect(() => {
-    if (!channelReady) return;
-    if (voiceChatAllowed) {
-      sendVoiceJoin();
-    } else {
-      stopVoiceSession();
-    }
-  }, [voiceChatAllowed, channelReady]);
+
 
   useEffect(() => {
     if (!channelReady || !voiceChatAllowed) return;
@@ -1628,6 +1656,36 @@ function RoomWatchPage({ code = "" }) {
           />
         )}
       </AnimatePresence>
+
+      <AnimatePresence>
+        {isAudioBlocked && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-md w-full mx-4"
+          >
+            <div className="bg-amber-500 text-amber-950 px-6 py-4 rounded-2xl shadow-2xl border-2 border-amber-400 flex items-center gap-4">
+              <div className="flex-shrink-0">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 9v4m0 4h.01M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18z" />
+                </svg>
+              </div>
+              <div className="flex-1">
+                <div className="font-bold text-sm">Voice Chat Blocked</div>
+                <div className="text-xs mt-0.5">Click to enable audio from other participants</div>
+              </div>
+              <button
+                onClick={handleUnmuteAll}
+                className="px-4 py-2 bg-amber-950 text-amber-100 rounded-xl font-bold text-sm hover:bg-amber-900 transition-all active:scale-95"
+              >
+                Enable
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <div ref={remoteAudioContainerRef} className="sr-only" />
     </div >
   );
