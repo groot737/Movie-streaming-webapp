@@ -111,6 +111,17 @@ function RoomWatchPage({ code = "" }) {
   const [playerSeekTime, setPlayerSeekTime] = useState(null);
   const videoPlayerRef = useRef(null);
 
+  // Playback state for time synchronization
+  const playbackStateRef = useRef({
+    isPlaying: false,
+    lastKnownTime: 0,
+    lastUpdateTimestamp: Date.now(),
+    playbackRate: 1.0
+  });
+  const lastStateRequestIdRef = useRef(null);
+  const hasRemoteStateRef = useRef(false);
+  const [videoReady, setVideoReady] = useState(false);
+
   useEffect(() => {
     voiceChatEnabledRef.current = voiceChatEnabled;
   }, [voiceChatEnabled]);
@@ -308,6 +319,11 @@ function RoomWatchPage({ code = "" }) {
 
     fetchStream();
   }, [details, mediaType, selectedSeason, selectedEpisode, mediaId]);
+
+  // Reset video ready state when stream URL changes
+  useEffect(() => {
+    setVideoReady(false);
+  }, [streamUrl]);
 
   useEffect(() => {
     roomPausedRef.current = roomPaused;
@@ -688,14 +704,33 @@ function RoomWatchPage({ code = "" }) {
     });
 
     channel.on("broadcast", { event: "state_sync" }, (payload) => {
-      // Ignore our own state_sync broadcasts to prevent overwriting our current state
       const from = payload?.payload?.from;
-      if (from === clientIdRef.current) return;
+      const isResponseToRequest = payload?.payload?.isResponseToRequest;
+      const requestId = payload?.payload?.requestId;
+
+      if (
+        requestId &&
+        lastStateRequestIdRef.current &&
+        requestId !== lastStateRequestIdRef.current
+      ) {
+        return;
+      }
+
+      // Ignore our own state_sync broadcasts UNLESS it's a response to our state_request
+      // This allows solo users (host alone) to restore state on refresh
+      if (from === clientIdRef.current && !isResponseToRequest) return;
+      if (from !== clientIdRef.current) {
+        hasRemoteStateRef.current = true;
+      }
+      if (from === clientIdRef.current && isResponseToRequest && hasRemoteStateRef.current) {
+        return;
+      }
 
       const paused = payload?.payload?.paused;
       if (typeof paused === "boolean") {
         setRoomPaused(paused);
       }
+
       // Sync season/episode for TV shows
       const mediaTypeFromSync = payload?.payload?.mediaType;
       if (mediaTypeFromSync === "tv") {
@@ -708,20 +743,68 @@ function RoomWatchPage({ code = "" }) {
           setSelectedEpisode(episode);
         }
       }
+
+      // Sync playback time with authoritative time calculation
+      const { isPlaying, lastKnownTime, lastUpdateTimestamp, playbackRate } = payload?.payload || {};
+      if (typeof lastKnownTime === "number" && typeof lastUpdateTimestamp === "number") {
+        // Store the playback state
+        playbackStateRef.current = {
+          isPlaying: isPlaying || false,
+          lastKnownTime,
+          lastUpdateTimestamp,
+          playbackRate: playbackRate || 1.0
+        };
+
+        // Calculate authoritative time (accounts for time elapsed during loading)
+        const elapsed = (Date.now() - lastUpdateTimestamp) / 1000;
+        const authoritativeTime = lastKnownTime + (elapsed * (playbackRate || 1.0));
+
+        // If video is ready, sync immediately
+        const video = videoPlayerRef.current;
+        if (video && videoReady) {
+          video.seek(authoritativeTime);
+          if (isPlaying) {
+            video.play();
+          } else {
+            video.pause();
+          }
+        } else {
+          // Video not ready yet, will sync when it becomes ready
+          setPlayerSeekTime(authoritativeTime);
+          setPlayerShouldPlay(isPlaying);
+        }
+      }
     });
 
-    channel.on("broadcast", { event: "state_request" }, () => {
+    channel.on("broadcast", { event: "state_request" }, (payload) => {
       // Any user can respond with their current state
       // This allows the host to get state from other users when they refresh
+      const requestId = payload?.payload?.requestId;
+      const requester = payload?.payload?.from;
+      const hasLocalPlayback =
+        playbackStateRef.current.lastKnownTime > 0 || videoReady;
+      if (requester === clientIdRef.current && !hasLocalPlayback) {
+        return;
+      }
+      const video = videoPlayerRef.current;
+      const currentTime = video?.getCurrentTime?.() || 0;
+
       channel.send({
         type: "broadcast",
         event: "state_sync",
         payload: {
           from: clientIdRef.current,
+          isResponseToRequest: true, // Mark as response so sender can receive their own state
+          requestId,
           paused: roomPausedRef.current,
           mediaType: mediaType,
           season: selectedSeasonRef.current,
-          episode: selectedEpisodeRef.current
+          episode: selectedEpisodeRef.current,
+          // Playback time synchronization
+          isPlaying: playbackStateRef.current.isPlaying,
+          lastKnownTime: currentTime,
+          lastUpdateTimestamp: Date.now(),
+          playbackRate: 1.0
         },
       });
     });
@@ -746,6 +829,49 @@ function RoomWatchPage({ code = "" }) {
       const time = payload?.payload?.time;
       if (from && from !== clientIdRef.current && typeof time === "number") {
         setPlayerSeekTime(time);
+      }
+    });
+
+    // New playback_state event for full synchronization
+    channel.on("broadcast", { event: "playback_state" }, (payload) => {
+      const from = payload?.payload?.from;
+      if (from === clientIdRef.current) return; // Ignore our own broadcasts
+
+      const { isPlaying, lastKnownTime, lastUpdateTimestamp, playbackRate } = payload?.payload || {};
+      if (typeof lastKnownTime === "number" && typeof lastUpdateTimestamp === "number") {
+        // Store the playback state
+        playbackStateRef.current = {
+          isPlaying: isPlaying || false,
+          lastKnownTime,
+          lastUpdateTimestamp,
+          playbackRate: playbackRate || 1.0
+        };
+
+        // Calculate authoritative time
+        const elapsed = (Date.now() - lastUpdateTimestamp) / 1000;
+        const authoritativeTime = lastKnownTime + (elapsed * (playbackRate || 1.0));
+
+        // Sync video if ready
+        const video = videoPlayerRef.current;
+        if (video && videoReady) {
+          const currentTime = video.getCurrentTime();
+          const drift = Math.abs(currentTime - authoritativeTime);
+
+          // Only seek if drift is significant (> 0.5 seconds)
+          if (drift > 0.5) {
+            video.seek(authoritativeTime);
+          }
+
+          if (isPlaying && video.isPaused()) {
+            video.play();
+          } else if (!isPlaying && !video.isPaused()) {
+            video.pause();
+          }
+        } else {
+          // Video not ready yet, apply once it is
+          setPlayerSeekTime(authoritativeTime);
+          setPlayerShouldPlay(Boolean(isPlaying));
+        }
       }
     });
 
@@ -1051,10 +1177,13 @@ function RoomWatchPage({ code = "" }) {
       if (status === "SUBSCRIBED") {
         setChannelReady(true);
         // Presence tracking is handled by the useEffect below when displayName is ready
+        const requestId = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        lastStateRequestIdRef.current = requestId;
+        hasRemoteStateRef.current = false;
         channel.send({
           type: "broadcast",
           event: "state_request",
-          payload: {},
+          payload: { from: clientIdRef.current, requestId },
         });
       }
     });
@@ -1070,6 +1199,34 @@ function RoomWatchPage({ code = "" }) {
       supabase.removeChannel(channel);
     };
   }, [code, isHost, voiceChatAllowed]);
+
+  // Drift correction loop
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const state = playbackStateRef.current;
+      const video = videoPlayerRef.current;
+
+      if (!state || !video || !videoReady || !state.isPlaying) return;
+
+      // Calculate expected time
+      const elapsed = (Date.now() - state.lastUpdateTimestamp) / 1000;
+      const expectedTime = state.lastKnownTime + (elapsed * state.playbackRate);
+
+      // Get current time
+      const currentTime = video.getCurrentTime();
+
+      // Check drift
+      const drift = Math.abs(currentTime - expectedTime);
+
+      // Resync if drift exceeds threshold (0.5 seconds)
+      if (drift > 0.5) {
+        console.log(`Drift detected: ${drift.toFixed(2)}s, resyncing to ${expectedTime.toFixed(2)}s`);
+        video.seek(expectedTime);
+      }
+    }, 3000); // Check every 3 seconds
+
+    return () => clearInterval(interval);
+  }, [videoReady]);
 
   useEffect(() => {
     // Only track if displayName is set (and strictly not null)
@@ -1177,30 +1334,79 @@ function RoomWatchPage({ code = "" }) {
   // --- Video Player Sync Handlers ---
   const handleLocalPlay = () => {
     if (!channelRef.current) return;
+    const video = videoPlayerRef.current;
+    const currentTime = video?.getCurrentTime?.() || 0;
+
+    // Update local playback state
+    playbackStateRef.current = {
+      isPlaying: true,
+      lastKnownTime: currentTime,
+      lastUpdateTimestamp: Date.now(),
+      playbackRate: 1.0
+    };
+
     channelRef.current.send({
       type: "broadcast",
-      event: "player_play",
-      payload: { from: clientIdRef.current },
+      event: "playback_state",
+      payload: {
+        from: clientIdRef.current,
+        isPlaying: true,
+        lastKnownTime: currentTime,
+        lastUpdateTimestamp: Date.now(),
+        playbackRate: 1.0
+      },
     });
   };
 
   const handleLocalPause = () => {
     if (!channelRef.current) return;
+    const video = videoPlayerRef.current;
+    const currentTime = video?.getCurrentTime?.() || 0;
+
+    // Update local playback state
+    playbackStateRef.current = {
+      isPlaying: false,
+      lastKnownTime: currentTime,
+      lastUpdateTimestamp: Date.now(),
+      playbackRate: 1.0
+    };
+
     channelRef.current.send({
       type: "broadcast",
-      event: "player_pause",
-      payload: { from: clientIdRef.current },
+      event: "playback_state",
+      payload: {
+        from: clientIdRef.current,
+        isPlaying: false,
+        lastKnownTime: currentTime,
+        lastUpdateTimestamp: Date.now(),
+        playbackRate: 1.0
+      },
     });
   };
 
   const handleLocalSeek = (time) => {
     if (!channelRef.current) return;
+
+    // Update local playback state
+    const video = videoPlayerRef.current;
+    const isPlaying = !video?.isPaused?.();
+
+    playbackStateRef.current = {
+      isPlaying,
+      lastKnownTime: time,
+      lastUpdateTimestamp: Date.now(),
+      playbackRate: 1.0
+    };
+
     channelRef.current.send({
       type: "broadcast",
-      event: "player_seek",
+      event: "playback_state",
       payload: {
         from: clientIdRef.current,
-        time: time
+        isPlaying,
+        lastKnownTime: time,
+        lastUpdateTimestamp: Date.now(),
+        playbackRate: 1.0
       },
     });
   };
@@ -1440,6 +1646,27 @@ function RoomWatchPage({ code = "" }) {
                         onPlay={handleLocalPlay}
                         onPause={handleLocalPause}
                         onSeeking={handleLocalSeek}
+                        onTimeUpdate={() => {
+                          // Mark video as ready on first time update
+                          if (!videoReady) {
+                            setVideoReady(true);
+
+                            // Trigger initial sync if we have playback state
+                            const state = playbackStateRef.current;
+                            if (state && state.lastKnownTime > 0) {
+                              const elapsed = (Date.now() - state.lastUpdateTimestamp) / 1000;
+                              const authoritativeTime = state.lastKnownTime + (elapsed * state.playbackRate);
+
+                              const video = videoPlayerRef.current;
+                              if (video) {
+                                video.seek(authoritativeTime);
+                                if (state.isPlaying) {
+                                  video.play();
+                                }
+                              }
+                            }
+                          }
+                        }}
                       />
 
                       {roomPaused && (
