@@ -737,22 +737,20 @@ function RoomWatchPage({ code = "" }) {
           }
         }
 
-        // Always create offer if we have lower client ID
-        // This establishes the connection even if neither has mic enabled
-        if (clientIdRef.current < peerId) {
-          const offer = await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          console.log(`Sending offer to ${peerId}, mic enabled: ${voiceChatEnabledRef.current}`);
-          channel.send({
-            type: "broadcast",
-            event: "webrtc-offer",
-            payload: {
-              from: clientIdRef.current,
-              to: peerId,
-              sdp: pc.localDescription,
-            },
-          });
-        }
+        // Create and send offer to establish connection
+        // The existing peer (us) should offer to the new peer
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        console.log(`Sending offer to ${peerId}, mic enabled: ${voiceChatEnabledRef.current}`);
+        channel.send({
+          type: "broadcast",
+          event: "webrtc-offer",
+          payload: {
+            from: clientIdRef.current,
+            to: peerId,
+            sdp: pc.localDescription,
+          },
+        });
       } catch (err) {
         console.error(`Error handling webrtc-join from ${peerId}:`, err);
         // Only set error status if we were trying to enable mic
