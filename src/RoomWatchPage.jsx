@@ -113,6 +113,19 @@ function RoomWatchPage({ code = "" }) {
     voiceChatEnabledRef.current = voiceChatEnabled;
   }, [voiceChatEnabled]);
 
+  // Cleanup on component unmount
+  useEffect(() => {
+    return () => {
+      console.log("RoomWatchPage unmounting - cleaning up microphone and audio resources");
+      stopLocalStream();
+      closeAllPeers();
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(() => { });
+        audioContextRef.current = null;
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (!voiceChatAllowed && voiceChatEnabled) {
       setVoiceChatEnabled(false);
@@ -326,9 +339,12 @@ function RoomWatchPage({ code = "" }) {
 
   const stopLocalStream = () => {
     if (localStreamRef.current) {
-      localStreamRef.current.getTracks().forEach((track) => track.stop());
+      localStreamRef.current.getTracks().forEach((track) => {
+        track.stop();
+        console.log(`Stopped ${track.kind} track: ${track.label}`);
+      });
+      localStreamRef.current = null;
     }
-    localStreamRef.current = null;
   };
 
   const closeAllPeers = () => {
@@ -1016,6 +1032,7 @@ function RoomWatchPage({ code = "" }) {
     channelRef.current = channel;
 
     return () => {
+      console.log("Cleaning up voice chat channel");
       stopVoiceSession();
       channelRef.current = null;
       setChannelReady(false);
