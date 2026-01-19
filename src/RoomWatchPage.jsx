@@ -1238,13 +1238,13 @@ function RoomWatchPage({ code = "" }) {
               initial="hidden"
               animate="show"
               variants={fadeUp}
-              className="relative group pr-0 flex-1"
+              className="relative group pr-0"
             >
               {/* Ambient Glow */}
               <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 via-purple-500/20 to-blue-500/20 rounded-2xl blur-3xl opacity-0 group-hover:opacity-100 transition duration-1000 group-hover:duration-200 pointer-events-none hidden lg:block" />
 
-              <div className="relative rounded-2xl lg:rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl flex flex-col-reverse lg:flex-col h-full">
-                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between items-start gap-4 px-4 lg:px-6 py-3 lg:py-4 border-t lg:border-t-0 lg:border-b border-slate-800/50 bg-slate-900/40 backdrop-blur-md">
+              <div className="relative rounded-2xl lg:rounded-3xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl flex flex-col">
+                <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between items-start gap-4 px-4 lg:px-6 py-3 lg:py-4 border-b border-slate-800/50 bg-slate-900/40 backdrop-blur-md">
                   <div className="flex items-center gap-4 w-full lg:w-auto">
                     <button
                       onClick={() => setIsTheaterMode(!isTheaterMode)}
@@ -1355,7 +1355,7 @@ function RoomWatchPage({ code = "" }) {
                   </div>
                 </div>
 
-                <div className="relative w-full h-[40vh] sm:h-auto sm:aspect-video bg-black group-hover:shadow-[0_0_50px_rgba(0,0,0,0.5)] transition-shadow duration-700 flex-1">
+                <div className="relative w-full h-[35vh] md:h-auto md:aspect-video bg-black transition-shadow duration-700">
                   {streamUrl ? (
                     <div className="relative h-full w-full">
                       <VideoPlayer
