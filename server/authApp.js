@@ -492,7 +492,7 @@ export const getAuthApp = () => {
 
   app.post("/api/rooms", requireAuth, async (req, res, next) => {
     const title = (req.body?.title || "").trim();
-    const mediaId = Number(req.body?.mediaId);
+    const mediaId = (req.body?.mediaId || "").toString().trim();
     const mediaType = req.body?.mediaType === "tv" ? "tv" : "movie";
     const voiceChatEnabled = Boolean(req.body?.voiceChatEnabled);
     const textChatEnabled = Boolean(req.body?.textChatEnabled);
@@ -505,7 +505,7 @@ export const getAuthApp = () => {
         .status(400)
         .json({ message: "Room title must be 120 characters or less." });
     }
-    if (!Number.isFinite(mediaId)) {
+    if (!mediaId) {
       return res.status(400).json({ message: "Invalid media id." });
     }
 

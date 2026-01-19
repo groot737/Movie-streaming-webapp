@@ -215,11 +215,22 @@ function RoomWatchPage({ code = "" }) {
           }
         }
 
-        const detailData = await tmdbClient.getDetails(
-          roomData.media_type === "tv" ? "tv" : "movie",
-          roomData.media_id,
-          controller.signal
+        // Fetch details from Consumet API
+        const response = await fetch(
+          `https://consumet-eta-five.vercel.app/movies/flixhq/info?id=${roomData.media_id}`,
+          { signal: controller.signal }
         );
+        if (!response.ok) {
+          throw new Error("Unable to load this title.");
+        }
+        const detailData = await response.json();
+
+        // Pre-calculate episodes for initial render to avoid flicker
+        if (roomData.media_type === "tv" && detailData.episodes) {
+          const seasonEps = detailData.episodes.filter(ep => ep.season === 1);
+          setEpisodes(seasonEps);
+        }
+
         setDetails(detailData);
       } catch (err) {
         if (err.name !== "AbortError") {
@@ -236,51 +247,19 @@ function RoomWatchPage({ code = "" }) {
   }, [code, currentUser]);
 
   useEffect(() => {
-    if (mediaType !== "tv" || !details?.seasons?.length) {
+    // Process episodes from details directly
+    if (mediaType !== "tv" || !details?.episodes?.length) {
       setEpisodes([]);
       setSeasonError("");
       return;
     }
-    const seasonNumber = details.seasons.find(
-      (season) => season.season_number === selectedSeason
-    )
-      ? selectedSeason
-      : details.seasons[0].season_number;
 
-    // If the currently selected season doesn't exist in the details (e.g. initial load),
-    // we should update it to the first available season.
-    // However, we avoid immediate state update loops by checking logic first.
-    // Ideally we want to sync them.
+    // Filter episodes for the selected season
+    // Consumet episodes usually have a 'season' field
+    const seasonEps = details.episodes.filter(ep => ep.season === selectedSeason);
+    setEpisodes(seasonEps);
 
-    if (seasonAbortRef.current) {
-      seasonAbortRef.current.abort();
-    }
-    const controller = new AbortController();
-    seasonAbortRef.current = controller;
-    setSeasonLoading(true);
-    setSeasonError("");
-
-    const run = async () => {
-      try {
-        const data = await tmdbClient.getSeason(
-          mediaId,
-          seasonNumber,
-          controller.signal
-        );
-        setEpisodes(data?.episodes || []);
-      } catch (err) {
-        if (err.name !== "AbortError") {
-          setSeasonError(err.message || "Unable to load episodes.");
-        }
-      } finally {
-        setSeasonLoading(false);
-      }
-    };
-
-    run();
-
-    return () => controller.abort();
-  }, [mediaId, mediaType, selectedSeason, details]);
+  }, [mediaType, selectedSeason, details]);
 
   useEffect(() => {
     roomPausedRef.current = roomPaused;
@@ -1002,24 +981,25 @@ function RoomWatchPage({ code = "" }) {
     }
   }, [voiceChatAllowed, voiceChatEnabled, channelReady]);
 
-  const title = details?.title || details?.name || "Loading...";
-  const releaseDate = details?.release_date || details?.first_air_date || "";
+  const title = details?.title || "Loading...";
+  const releaseDate = details?.releaseDate || "";
   const year = releaseDate ? releaseDate.slice(0, 4) : null;
-  const runtime = formatRuntime(details, mediaType);
-  const genres = details?.genres?.length
-    ? details.genres.map((g) => g.name).join(" / ")
+  const runtime = details?.duration || null;
+  const genres = Array.isArray(details?.genres)
+    ? details.genres.join(" / ")
     : null;
-  const rating = details?.vote_average
-    ? details.vote_average.toFixed(1)
-    : null;
-  const imdbId = details?.imdb_id;
-  const poster = details?.poster_path
-    ? `${POSTER_BASE}${details.poster_path}`
-    : null;
+  const rating = details?.rating ? details.rating.toFixed(1) : null;
+  const poster = details?.image || null;
+  const imdbId = null;
 
   // --- Start TV Show Dropdown Logic ---
-  const seasonOptions =
-    details?.seasons?.filter((season) => season.season_number > 0) || [];
+  // Consumet returns episodes for all seasons in details.episodes
+  // We need to extract unique season numbers.
+  const seasonOptions = useMemo(() => {
+    if (!details?.episodes) return [];
+    const seasons = new Set(details.episodes.map(e => e.season));
+    return Array.from(seasons).sort((a, b) => a - b).map(num => ({ id: num, season_number: num }));
+  }, [details]);
 
   // --- Handlers for TV Dropdowns with Broadcast ---
 
@@ -1084,10 +1064,7 @@ function RoomWatchPage({ code = "" }) {
     setShowShareModal(true);
   };
 
-  const handleTogglePause = () => {
-    if (!isHost) return;
-    setRoomPaused((prev) => !prev);
-  };
+
 
   const handleCloseRoom = async () => {
     if (!roomId) return;
@@ -1205,25 +1182,30 @@ function RoomWatchPage({ code = "" }) {
                   <div className="w-full lg:w-auto flex flex-wrap items-center justify-start lg:justify-end gap-2">
                     {mediaType === "tv" && (
                       <div className="flex items-center gap-2 mr-1">
-                        <div className="relative">
+                        <div className="relative group/select">
                           <select
                             value={selectedSeason}
                             onChange={handleSeasonChange}
-                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-2 py-1 lg:px-3 lg:py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-16 lg:w-20 text-center h-8 flex items-center justify-center"
+                            className="appearance-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 pr-8 text-[10px] uppercase font-black text-cyan-400 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 hover:border-cyan-500/50 transition w-full min-w-[80px] cursor-pointer"
                           >
                             {seasonOptions.map((season) => (
                               <option key={season.id} value={season.season_number}>
-                                S{season.season_number}
+                                Season {season.season_number}
                               </option>
                             ))}
                           </select>
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 group-hover/select:text-cyan-500 transition-colors">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="m6 9 6 6 6-6" />
+                            </svg>
+                          </div>
                         </div>
-                        <div className="relative">
+                        <div className="relative group/select">
                           <select
                             value={selectedEpisode}
                             onChange={handleEpisodeChange}
                             disabled={seasonLoading || episodes.length === 0}
-                            className="appearance-none rounded-lg border border-slate-700 bg-slate-800/50 px-2 py-1 lg:px-3 lg:py-1.5 text-[10px] uppercase font-bold text-slate-300 focus:outline-none focus:ring-1 focus:ring-cyan-500/50 hover:border-slate-600 transition w-16 lg:w-20 text-center disabled:opacity-50 h-8 flex items-center justify-center"
+                            className="appearance-none rounded-xl border border-slate-700 bg-slate-900 px-3 py-1.5 pr-8 text-[10px] uppercase font-black text-slate-300 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 hover:border-cyan-500/50 transition w-full min-w-[80px] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                           >
                             {seasonLoading ? (
                               <option>...</option>
@@ -1231,26 +1213,22 @@ function RoomWatchPage({ code = "" }) {
                               <option>NA</option>
                             ) : (
                               episodes.map((episode) => (
-                                <option key={episode.id} value={episode.episode_number}>
-                                  E{episode.episode_number}
+                                <option key={episode.id} value={episode.number}>
+                                  Ep {episode.number}
                                 </option>
                               ))
                             )}
                           </select>
+                          <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 group-hover/select:text-cyan-500 transition-colors">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="m6 9 6 6 6-6" />
+                            </svg>
+                          </div>
                         </div>
                       </div>
                     )}
 
                     <div className="flex bg-slate-800/50 rounded-full p-1 border border-slate-700/50">
-                      {isHost && (
-                        <button
-                          type="button"
-                          onClick={handleTogglePause}
-                          className="h-8 px-3 lg:px-4 rounded-full text-[10px] uppercase tracking-wider font-bold text-slate-200 hover:bg-slate-700 transition"
-                        >
-                          {roomPaused ? "Resume" : "Pause"}
-                        </button>
-                      )}
                       <button
                         type="button"
                         onClick={handleShare}
@@ -1334,9 +1312,7 @@ function RoomWatchPage({ code = "" }) {
             {hostError && (
               <div className="text-sm text-rose-300 mt-2">{hostError}</div>
             )}
-            {loading && !error && (
-              <div className="text-sm text-slate-400">Loading details...</div>
-            )}
+
             {/* Mobile Tab Switcher */}
             <div className="flex lg:hidden bg-slate-900 border border-slate-800 rounded-2xl p-1 gap-1">
               <button
@@ -1484,7 +1460,7 @@ function RoomWatchPage({ code = "" }) {
                 <h3 className="text-[10px] uppercase tracking-[0.3em] font-black text-slate-500">The Story</h3>
               </div>
               <p className="text-sm lg:text-base text-slate-300 leading-relaxed max-w-4xl font-medium antialiased">
-                {details?.overview || "No overview available for this title."}
+                {details?.description || "No overview available for this title."}
               </p>
             </div>
           )}
@@ -1503,11 +1479,19 @@ function RoomWatchPage({ code = "" }) {
       <AnimatePresence>
         {loading && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
+            initial={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 pointer-events-none bg-slate-950/40"
-          />
+            transition={{ duration: 0.5 }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-slate-950"
+          >
+            <div className="w-16 h-16 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin mb-6" />
+            <div className="text-xl font-bold text-slate-200 tracking-tight animate-pulse">
+              Entering Room...
+            </div>
+            <div className="text-sm text-slate-500 mt-2">
+              Preparing your stream
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

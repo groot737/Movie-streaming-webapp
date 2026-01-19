@@ -41,7 +41,7 @@ const parseHash = () => {
     const type = params.get("type") || "movie";
     return {
       page: "room",
-      mediaId: Number(id) || 550,
+      mediaId: id,
       mediaType: type === "tv" ? "tv" : "movie",
     };
   }

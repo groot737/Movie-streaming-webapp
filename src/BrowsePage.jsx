@@ -1444,10 +1444,7 @@ export function MovieModal({
     window.location.hash = `#watch?id=${movie.id}&type=${type}`;
   };
 
-  const handleCreateRoom = () => {
-    const type = mediaType === "tv" ? "tv" : "movie";
-    window.location.hash = `#room?id=${movie.id}&type=${type}`;
-  };
+
 
   const handleAddToList = async () => {
     if (!selectedListId) {
@@ -1580,12 +1577,6 @@ export function MovieModal({
             >
               <PlayIcon />
               Watch
-            </button>
-            <button
-              onClick={handleCreateRoom}
-              className="px-4 py-2 rounded-lg border border-slate-700"
-            >
-              Create room
             </button>
           </div>
         </div>

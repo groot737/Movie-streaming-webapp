@@ -52,6 +52,7 @@ function RoomPage({ mediaId = 550, mediaType = "movie" }) {
     window.scrollTo(0, 0);
   }, []);
 
+
   useEffect(() => {
     if (abortRef.current) {
       abortRef.current.abort();
@@ -63,12 +64,15 @@ function RoomPage({ mediaId = 550, mediaType = "movie" }) {
 
     const run = async () => {
       try {
-        const detailData = await tmdbClient.getDetails(
-          mediaType,
-          mediaId,
-          controller.signal
+        const response = await fetch(
+          `https://consumet-eta-five.vercel.app/movies/flixhq/info?id=${mediaId}`,
+          { signal: controller.signal }
         );
-        setDetails(detailData);
+        if (!response.ok) {
+          throw new Error("Unable to load this title.");
+        }
+        const data = await response.json();
+        setDetails(data);
       } catch (err) {
         if (err.name !== "AbortError") {
           setError(err.message || "Unable to load this title.");
@@ -83,22 +87,16 @@ function RoomPage({ mediaId = 550, mediaType = "movie" }) {
     return () => controller.abort();
   }, [mediaId, mediaType]);
 
-  const title = details?.title || details?.name || "Loading...";
-  const releaseDate = details?.release_date || details?.first_air_date || "";
+  const title = details?.title || "Loading...";
+  const releaseDate = details?.releaseDate || "";
   const year = releaseDate ? releaseDate.slice(0, 4) : null;
-  const runtime = formatRuntime(details, mediaType);
-  const genres = details?.genres?.length
-    ? details.genres.map((g) => g.name).join(" / ")
+  const runtime = details?.duration || null;
+  const genres = Array.isArray(details?.genres)
+    ? details.genres.join(" / ")
     : null;
-  const rating = details?.vote_average
-    ? details.vote_average.toFixed(1)
-    : null;
-  const poster = details?.poster_path
-    ? `${POSTER_BASE}${details.poster_path}`
-    : null;
-  const backdrop = details?.backdrop_path
-    ? `${BACKDROP_BASE}${details.backdrop_path}`
-    : null;
+  const rating = details?.rating ? details.rating.toFixed(1) : null;
+  const poster = details?.image || null;
+  const backdrop = details?.cover || null;
 
   useEffect(() => {
     if (!roomTitle && title && title !== "Loading...") {
@@ -378,16 +376,14 @@ function ToggleRow({ label, description, enabled, onToggle }) {
         type="button"
         onClick={onToggle}
         aria-pressed={enabled}
-        className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${
-          enabled
-            ? "bg-cyan-500 border-cyan-400"
-            : "bg-slate-800 border-slate-700"
-        }`}
+        className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${enabled
+          ? "bg-cyan-500 border-cyan-400"
+          : "bg-slate-800 border-slate-700"
+          }`}
       >
         <span
-          className={`inline-block h-4 w-4 rounded-full bg-slate-950 transition ${
-            enabled ? "translate-x-6" : "translate-x-1"
-          }`}
+          className={`inline-block h-4 w-4 rounded-full bg-slate-950 transition ${enabled ? "translate-x-6" : "translate-x-1"
+            }`}
         />
       </button>
     </div>

@@ -82,6 +82,10 @@ function AccountPage({ initialTab = "rooms" }) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const activeList = lists.find((list) => list.id === activeListId) || null;
+  const [createRoomModalOpen, setCreateRoomModalOpen] = useState(false);
+
+  const handleOpenCreateRoomModal = () => setCreateRoomModalOpen(true);
+  const handleCloseCreateRoomModal = () => setCreateRoomModalOpen(false);
 
   useEffect(() => {
     setActiveTab(normalizeTab(initialTab));
@@ -676,11 +680,10 @@ function AccountPage({ initialTab = "rooms" }) {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`px-4 py-2 rounded-full text-sm border transition ${
-                  activeTab === tab.id
-                    ? "bg-cyan-500 text-slate-950 border-cyan-400"
-                    : "border-slate-800 text-slate-300 hover:border-slate-600"
-                }`}
+                className={`px-4 py-2 rounded-full text-sm border transition ${activeTab === tab.id
+                  ? "bg-cyan-500 text-slate-950 border-cyan-400"
+                  : "border-slate-800 text-slate-300 hover:border-slate-600"
+                  }`}
               >
                 {tab.label}
               </button>
@@ -696,6 +699,12 @@ function AccountPage({ initialTab = "rooms" }) {
                     Rooms you have created will appear here.
                   </p>
                 </div>
+                <button
+                  onClick={handleOpenCreateRoomModal}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                >
+                  Create room
+                </button>
               </div>
               {roomsLoading && (
                 <div className="mt-6 text-sm text-slate-400">
@@ -852,11 +861,10 @@ function AccountPage({ initialTab = "rooms" }) {
                             key={list.id}
                             type="button"
                             onClick={() => setActiveListId(list.id)}
-                            className={`w-full text-left rounded-xl border px-3 py-3 transition ${
-                              activeListId === list.id
-                                ? "border-cyan-400 bg-cyan-500/10 text-slate-100"
-                                : "border-slate-800 bg-slate-900/60 text-slate-300 hover:border-slate-600"
-                            }`}
+                            className={`w-full text-left rounded-xl border px-3 py-3 transition ${activeListId === list.id
+                              ? "border-cyan-400 bg-cyan-500/10 text-slate-100"
+                              : "border-slate-800 bg-slate-900/60 text-slate-300 hover:border-slate-600"
+                              }`}
                           >
                             <div className="text-sm font-semibold">
                               {list.name}
@@ -967,9 +975,8 @@ function AccountPage({ initialTab = "rooms" }) {
                             <div className="grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
                               {activeList.movies.map((movie) => (
                                 <div
-                                  key={`${movie.mediaType || "movie"}-${
-                                    movie.id
-                                  }`}
+                                  key={`${movie.mediaType || "movie"}-${movie.id
+                                    }`}
                                   className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden cursor-pointer group"
                                   role="button"
                                   tabIndex={0}
@@ -1380,44 +1387,43 @@ function AccountPage({ initialTab = "rooms" }) {
                         key={key}
                         className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3"
                       >
-                      <div className="h-14 w-10 overflow-hidden rounded-md bg-slate-800">
-                        {movie.poster_path ? (
-                          <img
-                            src={`https://image.tmdb.org/t/p/w185${movie.poster_path}`}
-                            alt={movie.title}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <div className="h-full w-full flex items-center justify-center text-[10px] text-slate-500">
-                            No poster
+                        <div className="h-14 w-10 overflow-hidden rounded-md bg-slate-800">
+                          {movie.poster_path ? (
+                            <img
+                              src={`https://image.tmdb.org/t/p/w185${movie.poster_path}`}
+                              alt={movie.title}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : (
+                            <div className="h-full w-full flex items-center justify-center text-[10px] text-slate-500">
+                              No poster
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <div className="text-sm font-semibold text-slate-100 line-clamp-1">
+                            {movie.title}
                           </div>
-                        )}
-                      </div>
-                      <div className="flex-1">
-                        <div className="text-sm font-semibold text-slate-100 line-clamp-1">
-                          {movie.title}
+                          <div className="text-xs text-slate-400 mt-1">
+                            {(movie.release_date || "--")
+                              .toString()
+                              .slice(0, 4)}{" "}
+                            • {movie.mediaType === "tv" ? "Series" : "Movie"}
+                          </div>
                         </div>
-                        <div className="text-xs text-slate-400 mt-1">
-                          {(movie.release_date || "--")
-                            .toString()
-                            .slice(0, 4)}{" "}
-                          • {movie.mediaType === "tv" ? "Series" : "Movie"}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleAddSearchResult(movie)}
-                        disabled={isAdded}
-                        className={`px-3 py-1.5 rounded-lg border text-xs transition ${
-                          isAdded
+                        <button
+                          type="button"
+                          onClick={() => handleAddSearchResult(movie)}
+                          disabled={isAdded}
+                          className={`px-3 py-1.5 rounded-lg border text-xs transition ${isAdded
                             ? "border-emerald-500/70 bg-emerald-500/20 text-emerald-100"
                             : "border-slate-700 text-slate-200 hover:border-slate-500"
-                        }`}
-                      >
-                        {isAdded ? "Added" : "Add"}
-                      </button>
-                    </div>
+                            }`}
+                        >
+                          {isAdded ? "Added" : "Add"}
+                        </button>
+                      </div>
                     );
                   })}
                 </div>
@@ -1426,6 +1432,150 @@ function AccountPage({ initialTab = "rooms" }) {
           </div>
         </div>
       )}
+      {createRoomModalOpen && (
+        <CreateRoomModal onClose={handleCloseCreateRoomModal} />
+      )}
+    </div>
+  );
+}
+
+
+function CreateRoomModal({ onClose }) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", onKey);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = "";
+    };
+  }, [onClose]);
+
+  const handleSearch = async (e) => {
+    e.preventDefault();
+    if (!query.trim()) return;
+    setLoading(true);
+    setError("");
+    setResults([]);
+
+    try {
+      const res = await fetch(
+        `https://consumet-eta-five.vercel.app/movies/flixhq/${encodeURIComponent(
+          query
+        )}`
+      );
+      if (!res.ok) throw new Error("Search failed");
+      const data = await res.json();
+      setResults(data.results || []);
+    } catch (err) {
+      setError("Failed to search. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelect = (item) => {
+    // Consumet usually returns type as 'Movie' or 'TV Series'
+    const type = item.type === "TV Series" ? "tv" : "movie";
+    window.location.hash = `#room?id=${item.id}&type=${type}`;
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+      <div
+        className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+        onClick={onClose}
+        role="presentation"
+      />
+      <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl h-[80vh] flex flex-col">
+        <div className="flex items-start justify-between mb-4 flex-shrink-0">
+          <div>
+            <h3 className="text-lg font-semibold">Create a Room</h3>
+            <p className="text-sm text-slate-400 mt-1">
+              Search for a movie or TV show to watch with friends.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+          >
+            Close
+          </button>
+        </div>
+
+        <form onSubmit={handleSearch} className="flex gap-2 mb-4 flex-shrink-0">
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search for movies or TV shows..."
+            className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+            autoFocus
+          />
+          <button
+            type="submit"
+            disabled={loading}
+            className="px-6 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition disabled:opacity-50"
+          >
+            {loading ? "Searching..." : "Search"}
+          </button>
+        </form>
+
+        {error && (
+          <div className="text-rose-400 text-sm mb-4 flex-shrink-0">
+            {error}
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar">
+          {results.length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {results.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => handleSelect(item)}
+                  className="flex flex-col text-left group p-2 rounded-xl border border-transparent hover:border-slate-700 hover:bg-slate-900/40 transition"
+                >
+                  <div className="aspect-[2/3] w-full bg-slate-800 rounded-lg overflow-hidden mb-2 relative">
+                    {item.image ? (
+                      <img
+                        src={item.image}
+                        alt={item.title}
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex items-center justify-center h-full text-slate-500 text-xs">
+                        No Image
+                      </div>
+                    )}
+                    <div className="absolute top-2 right-2 bg-slate-950/80 px-2 py-1 rounded text-[10px] text-cyan-400 border border-slate-800">
+                      {item.type || "Movie"}
+                    </div>
+                  </div>
+                  <div className="font-medium text-sm text-slate-200 group-hover:text-cyan-400 transition line-clamp-2">
+                    {item.title}
+                  </div>
+                  <div className="text-xs text-slate-500 mt-1">
+                    {item.releaseDate || ""}
+                  </div>
+                </button>
+              ))}
+            </div>
+          ) : (
+            !loading && (
+              <div className="flex flex-col items-center justify-center h-full text-slate-500">
+                <p>No results found</p>
+                <p className="text-xs mt-1">Try searching for something else</p>
+              </div>
+            )
+          )}
+        </div>
+      </div>
     </div>
   );
 }
