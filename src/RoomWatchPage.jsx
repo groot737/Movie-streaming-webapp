@@ -103,6 +103,11 @@ function RoomWatchPage({ code = "" }) {
   const hasTrackedPresenceRef = useRef(false);
   const [streamUrl, setStreamUrl] = useState(null);
 
+  // Video player synchronization state
+  const [playerShouldPlay, setPlayerShouldPlay] = useState(null);
+  const [playerSeekTime, setPlayerSeekTime] = useState(null);
+  const videoPlayerRef = useRef(null);
+
   useEffect(() => {
     voiceChatEnabledRef.current = voiceChatEnabled;
   }, [voiceChatEnabled]);
@@ -641,6 +646,29 @@ function RoomWatchPage({ code = "" }) {
       });
     });
 
+    // Video player synchronization events
+    channel.on("broadcast", { event: "player_play" }, (payload) => {
+      const from = payload?.payload?.from;
+      if (from && from !== clientIdRef.current) {
+        setPlayerShouldPlay(true);
+      }
+    });
+
+    channel.on("broadcast", { event: "player_pause" }, (payload) => {
+      const from = payload?.payload?.from;
+      if (from && from !== clientIdRef.current) {
+        setPlayerShouldPlay(false);
+      }
+    });
+
+    channel.on("broadcast", { event: "player_seek" }, (payload) => {
+      const from = payload?.payload?.from;
+      const time = payload?.payload?.time;
+      if (from && from !== clientIdRef.current && typeof time === "number") {
+        setPlayerSeekTime(time);
+      }
+    });
+
     channel.on("broadcast", { event: "webrtc-join" }, async (payload) => {
       const data = payload?.payload || {};
       const peerId = data?.from;
@@ -1072,6 +1100,38 @@ function RoomWatchPage({ code = "" }) {
     broadcastMediaChange(selectedSeason, newEpisode);
   };
   // --- End TV Show Dropdown Logic ---
+
+  // --- Video Player Sync Handlers ---
+  const handleLocalPlay = () => {
+    if (!channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "player_play",
+      payload: { from: clientIdRef.current },
+    });
+  };
+
+  const handleLocalPause = () => {
+    if (!channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "player_pause",
+      payload: { from: clientIdRef.current },
+    });
+  };
+
+  const handleLocalSeek = (time) => {
+    if (!channelRef.current) return;
+    channelRef.current.send({
+      type: "broadcast",
+      event: "player_seek",
+      payload: {
+        from: clientIdRef.current,
+        time: time
+      },
+    });
+  };
+  // --- End Video Player Sync Handlers ---
   const playerUrl =
     mediaId && mediaType === "tv"
       ? `https://vidsrc.cc/v2/embed/tv/${mediaId}/${selectedSeason}/${selectedEpisode}`
@@ -1299,8 +1359,14 @@ function RoomWatchPage({ code = "" }) {
                   {streamUrl ? (
                     <div className="relative h-full w-full">
                       <VideoPlayer
+                        ref={videoPlayerRef}
                         src={streamUrl}
                         poster={poster}
+                        shouldPlay={playerShouldPlay}
+                        seekToTime={playerSeekTime}
+                        onPlay={handleLocalPlay}
+                        onPause={handleLocalPause}
+                        onSeeking={handleLocalSeek}
                       />
 
                       {roomPaused && (
