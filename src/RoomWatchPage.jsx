@@ -85,6 +85,8 @@ function RoomWatchPage({ code = "" }) {
   const seasonAbortRef = useRef(null);
   const channelRef = useRef(null);
   const roomPausedRef = useRef(false);
+  const selectedSeasonRef = useRef(1);
+  const selectedEpisodeRef = useRef(1);
   const localStreamRef = useRef(null);
   const peerConnectionsRef = useRef(new Map());
   const remoteAudioRef = useRef(new Map());
@@ -310,6 +312,11 @@ function RoomWatchPage({ code = "" }) {
   useEffect(() => {
     roomPausedRef.current = roomPaused;
   }, [roomPaused]);
+
+  useEffect(() => {
+    selectedSeasonRef.current = selectedSeason;
+    selectedEpisodeRef.current = selectedEpisode;
+  }, [selectedSeason, selectedEpisode]);
 
   useEffect(() => {
     if (!chatScrollRef.current) return;
@@ -681,18 +688,41 @@ function RoomWatchPage({ code = "" }) {
     });
 
     channel.on("broadcast", { event: "state_sync" }, (payload) => {
+      // Ignore our own state_sync broadcasts to prevent overwriting our current state
+      const from = payload?.payload?.from;
+      if (from === clientIdRef.current) return;
+
       const paused = payload?.payload?.paused;
       if (typeof paused === "boolean") {
         setRoomPaused(paused);
       }
+      // Sync season/episode for TV shows
+      const mediaTypeFromSync = payload?.payload?.mediaType;
+      if (mediaTypeFromSync === "tv") {
+        const season = payload?.payload?.season;
+        const episode = payload?.payload?.episode;
+        if (typeof season === "number") {
+          setSelectedSeason(season);
+        }
+        if (typeof episode === "number") {
+          setSelectedEpisode(episode);
+        }
+      }
     });
 
     channel.on("broadcast", { event: "state_request" }, () => {
-      if (!isHost) return;
+      // Any user can respond with their current state
+      // This allows the host to get state from other users when they refresh
       channel.send({
         type: "broadcast",
         event: "state_sync",
-        payload: { paused: roomPausedRef.current },
+        payload: {
+          from: clientIdRef.current,
+          paused: roomPausedRef.current,
+          mediaType: mediaType,
+          season: selectedSeasonRef.current,
+          episode: selectedEpisodeRef.current
+        },
       });
     });
 
