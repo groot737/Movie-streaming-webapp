@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react';
+import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
 import Hls from 'hls.js';
 
 export const VideoPlayer = forwardRef(({
@@ -229,7 +229,7 @@ export const VideoPlayer = forwardRef(({
     }, [onPlay, onPause, onSeeking, onTimeUpdate]);
 
     // Custom control handlers
-    const togglePlay = () => {
+    const togglePlay = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
 
@@ -238,18 +238,18 @@ export const VideoPlayer = forwardRef(({
         } else {
             video.pause();
         }
-    };
+    }, []);
 
-    const handleSeek = (e) => {
+    const handleSeek = useCallback((e) => {
         const video = videoRef.current;
         if (!video) return;
 
         const rect = e.currentTarget.getBoundingClientRect();
         const pos = (e.clientX - rect.left) / rect.width;
         video.currentTime = pos * video.duration;
-    };
+    }, []);
 
-    const handleVolumeChange = (e) => {
+    const handleVolumeChange = useCallback((e) => {
         const video = videoRef.current;
         if (!video) return;
 
@@ -257,17 +257,17 @@ export const VideoPlayer = forwardRef(({
         video.volume = newVolume;
         setVolume(newVolume);
         setIsMuted(newVolume === 0);
-    };
+    }, []);
 
-    const toggleMute = () => {
+    const toggleMute = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
 
         video.muted = !video.muted;
         setIsMuted(!isMuted);
-    };
+    }, [isMuted]);
 
-    const toggleFullscreen = () => {
+    const toggleFullscreen = useCallback(() => {
         if (!containerRef.current) return;
 
         if (!document.fullscreenElement) {
@@ -277,7 +277,7 @@ export const VideoPlayer = forwardRef(({
             document.exitFullscreen?.();
             setIsFullscreen(false);
         }
-    };
+    }, []);
 
     const formatTime = (seconds) => {
         if (isNaN(seconds)) return '0:00';
@@ -298,21 +298,21 @@ export const VideoPlayer = forwardRef(({
         }, 3000);
     };
 
-    const handleRewind = () => {
+    const handleRewind = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
         video.currentTime = Math.max(0, video.currentTime - 10);
         setShowRewind(true);
         setTimeout(() => setShowRewind(false), 800);
-    };
+    }, []);
 
-    const handleForward = () => {
+    const handleForward = useCallback(() => {
         const video = videoRef.current;
         if (!video) return;
         video.currentTime = Math.min(video.duration, video.currentTime + 10);
         setShowForward(true);
         setTimeout(() => setShowForward(false), 800);
-    };
+    }, []);
 
     const handleVideoClick = (e) => {
         const now = Date.now();
@@ -371,7 +371,7 @@ export const VideoPlayer = forwardRef(({
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, []);
+    }, [handleRewind, handleForward, togglePlay, toggleFullscreen]);
 
     return (
         <div
