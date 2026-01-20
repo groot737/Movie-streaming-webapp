@@ -80,6 +80,8 @@ function RoomWatchPage({ code = "" }) {
   const [currentUser, setCurrentUser] = useState(null);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showMicModal, setShowMicModal] = useState(false);
+  const [micPermissionGranted, setMicPermissionGranted] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
   const abortRef = useRef(null);
   const seasonAbortRef = useRef(null);
@@ -279,6 +281,13 @@ function RoomWatchPage({ code = "" }) {
 
     return () => controller.abort();
   }, [code, currentUser]);
+
+  // Show microphone access modal after auth if voice chat is enabled
+  useEffect(() => {
+    if (!loading && !error && currentUser && voiceChatAllowed && !micPermissionGranted && !showAuthModal) {
+      setShowMicModal(true);
+    }
+  }, [loading, error, currentUser, voiceChatAllowed, micPermissionGranted, showAuthModal]);
 
   useEffect(() => {
     // Process episodes from details directly
@@ -1933,6 +1942,20 @@ function RoomWatchPage({ code = "" }) {
       </AnimatePresence>
 
       <AnimatePresence>
+        {showMicModal && (
+          <MicAccessModal
+            onGrant={() => {
+              setMicPermissionGranted(true);
+              setShowMicModal(false);
+            }}
+            onSkip={() => {
+              setShowMicModal(false);
+            }}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
         {isAudioBlocked && (
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -2397,6 +2420,121 @@ function ShareModal({ roomCode, onClose }) {
               Anyone with this link can join your room.
             </p>
           </div>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function MicAccessModal({ onGrant, onSkip }) {
+  const [isGranting, setIsGranting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, []);
+
+  const handleGrantAccess = async () => {
+    setIsGranting(true);
+    setError("");
+    try {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error("Microphone not supported on this device.");
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stop the stream immediately - we just needed permission
+      stream.getTracks().forEach(track => track.stop());
+      onGrant();
+    } catch (err) {
+      if (err.name === "NotAllowedError") {
+        setError("Microphone access was denied. You can enable it later in your browser settings.");
+      } else if (err.name === "NotFoundError") {
+        setError("No microphone found on this device.");
+      } else {
+        setError(err.message || "Failed to access microphone.");
+      }
+    } finally {
+      setIsGranting(false);
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur flex items-center justify-center p-4"
+      role="dialog"
+      aria-modal="true"
+    >
+      <motion.div
+        initial={{ y: 20, opacity: 0, scale: 0.98 }}
+        animate={{ y: 0, opacity: 1, scale: 1 }}
+        exit={{ y: 20, opacity: 0, scale: 0.98 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden shadow-2xl"
+      >
+        <div className="px-6 py-8 text-center space-y-6">
+          {/* Microphone Icon */}
+          <div className="mx-auto w-20 h-20 rounded-2xl bg-cyan-500/10 flex items-center justify-center text-cyan-500 mb-2">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="9" y="2" width="6" height="11" rx="3" />
+              <path d="M5 11a7 7 0 0 0 14 0" />
+              <line x1="12" y1="18" x2="12" y2="22" />
+              <line x1="8" y1="22" x2="16" y2="22" />
+            </svg>
+          </div>
+
+          {/* Title */}
+          <h2 className="text-2xl font-bold text-slate-100">
+            Enable Voice Chat
+          </h2>
+
+          {/* Description */}
+          <p className="text-slate-400 text-sm leading-relaxed px-2">
+            Voice chat is enabled in this room. We need access to your microphone so you can communicate with other participants. You can enable or disable your microphone anytime using the controls in the room.
+          </p>
+
+          {/* Error Message */}
+          {error && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-200">
+              {error}
+            </div>
+          )}
+
+          {/* Action Buttons */}
+          <div className="space-y-3 pt-2">
+            <button
+              onClick={handleGrantAccess}
+              disabled={isGranting}
+              className="w-full px-6 py-3.5 rounded-xl bg-cyan-500 text-slate-950 font-bold text-sm hover:bg-cyan-400 transition-all shadow-lg shadow-cyan-500/20 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+            >
+              {isGranting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-slate-950/20 border-t-slate-950 rounded-full animate-spin" />
+                  Requesting Access...
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="2" width="6" height="11" rx="3" />
+                    <path d="M5 11a7 7 0 0 0 14 0" />
+                    <line x1="12" y1="18" x2="12" y2="22" />
+                    <line x1="8" y1="22" x2="16" y2="22" />
+                  </svg>
+                  Grant Microphone Access
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Info Text */}
+          <p className="text-[10px] text-slate-500 pt-2">
+            You can enable or disable your microphone anytime using the controls in the room.
+          </p>
         </div>
       </motion.div>
     </motion.div>
