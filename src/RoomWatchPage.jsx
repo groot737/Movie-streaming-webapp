@@ -284,10 +284,30 @@ function RoomWatchPage({ code = "" }) {
 
   // Show microphone access modal after auth if voice chat is enabled
   useEffect(() => {
-    if (!loading && !error && currentUser && voiceChatAllowed && !micPermissionGranted && !showAuthModal) {
-      setShowMicModal(true);
-    }
+    const checkMicPermission = async () => {
+      if (!loading && !error && currentUser && voiceChatAllowed && !micPermissionGranted && !showAuthModal) {
+        // Check if microphone permission is already granted
+        if (navigator?.permissions?.query) {
+          try {
+            const permissionStatus = await navigator.permissions.query({ name: 'microphone' });
+            if (permissionStatus.state === 'granted') {
+              // Permission already granted, no need to show modal
+              setMicPermissionGranted(true);
+              return;
+            }
+          } catch (err) {
+            // Permissions API not supported or failed, show modal anyway
+            console.log('Permissions API check failed:', err);
+          }
+        }
+        // Show modal if permission not granted or couldn't check
+        setShowMicModal(true);
+      }
+    };
+
+    checkMicPermission();
   }, [loading, error, currentUser, voiceChatAllowed, micPermissionGranted, showAuthModal]);
+
 
   useEffect(() => {
     // Process episodes from details directly

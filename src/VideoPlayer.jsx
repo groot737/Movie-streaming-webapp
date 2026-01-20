@@ -333,11 +333,8 @@ export const VideoPlayer = forwardRef(({
             }
             lastClickTimeRef.current = 0;
         } else {
-            // Single click - wait to see if it's a double click
+            // Single click - just update the timestamp for double-click detection
             lastClickTimeRef.current = now;
-            clickTimeoutRef.current = setTimeout(() => {
-                togglePlay();
-            }, 300);
         }
     };
 
