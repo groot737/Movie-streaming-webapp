@@ -132,11 +132,29 @@ function RoomWatchPage({ code = "" }) {
   useEffect(() => {
     return () => {
       console.log("RoomWatchPage unmounting - cleaning up microphone and audio resources");
+
+      // Stop local stream first
       stopLocalStream();
+
+      // Close all peer connections and clean up remote audio
       closeAllPeers();
+
+      // Close audio context
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(() => { });
         audioContextRef.current = null;
+      }
+
+      // Final cleanup: ensure all audio elements in the container are removed
+      if (remoteAudioContainerRef.current) {
+        while (remoteAudioContainerRef.current.firstChild) {
+          const child = remoteAudioContainerRef.current.firstChild;
+          if (child.tagName === 'AUDIO') {
+            child.pause();
+            child.srcObject = null;
+          }
+          remoteAudioContainerRef.current.removeChild(child);
+        }
       }
     };
   }, []);
@@ -382,8 +400,13 @@ function RoomWatchPage({ code = "" }) {
       peerConnectionsRef.current.delete(peerId);
     }
     const audioEl = remoteAudioRef.current.get(peerId);
-    if (audioEl && audioEl.parentNode) {
-      audioEl.parentNode.removeChild(audioEl);
+    if (audioEl) {
+      // Stop playback and clear the stream
+      audioEl.pause();
+      audioEl.srcObject = null;
+      if (audioEl.parentNode) {
+        audioEl.parentNode.removeChild(audioEl);
+      }
     }
     remoteAudioRef.current.delete(peerId);
     setVoicePeers(peerConnectionsRef.current.size);
@@ -403,6 +426,17 @@ function RoomWatchPage({ code = "" }) {
     Array.from(peerConnectionsRef.current.keys()).forEach((peerId) =>
       cleanupPeer(peerId)
     );
+    // Also clean up any remaining audio elements not associated with peers
+    remoteAudioRef.current.forEach((audioEl) => {
+      if (audioEl) {
+        audioEl.pause();
+        audioEl.srcObject = null;
+        if (audioEl.parentNode) {
+          audioEl.parentNode.removeChild(audioEl);
+        }
+      }
+    });
+    remoteAudioRef.current.clear();
   };
 
   const ensureLocalStream = async () => {
