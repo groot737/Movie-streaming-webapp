@@ -1492,7 +1492,7 @@ function CreateRoomModal({ onClose }) {
         onClick={onClose}
         role="presentation"
       />
-      <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl h-[80vh] flex flex-col">
+      <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-4 sm:p-6 shadow-2xl h-[85vh] sm:h-[80vh] flex flex-col">
         <div className="flex items-start justify-between mb-4 flex-shrink-0">
           <div>
             <h3 className="text-lg font-semibold">Create a Room</h3>
@@ -1513,7 +1513,7 @@ function CreateRoomModal({ onClose }) {
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search for movies or TV shows..."
+            placeholder="e.g., La La Land"
             className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-4 py-2 text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
             autoFocus
           />
