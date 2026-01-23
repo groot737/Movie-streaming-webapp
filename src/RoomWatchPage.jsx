@@ -5,6 +5,9 @@ import VideoPlayer from "./VideoPlayer";
 
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+const KLIPY_API_KEY =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_KLIPY_API) || "";
+const KLIPY_API_BASE = "https://api.klipy.com/api/v1";
 
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const ICE_SERVERS = [{ urls: "stun:stun.l.google.com:19302" }];
@@ -17,6 +20,75 @@ const fetchApiJson = async (path, signal) => {
     throw new Error(message);
   }
   return data;
+};
+
+const normalizeKlipyGifs = (payload) => {
+  const items =
+    payload?.data?.data ||
+    payload?.data?.gifs ||
+    payload?.data?.results ||
+    payload?.data ||
+    payload?.results ||
+    payload?.gifs ||
+    [];
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      const url =
+        item?.file?.md?.gif?.url ||
+        item?.file?.hd?.gif?.url ||
+        item?.file?.sm?.gif?.url ||
+        item?.images?.original?.url ||
+        item?.images?.downsized?.url ||
+        item?.media_formats?.gif?.url ||
+        item?.media?.[0]?.gif?.url ||
+        item?.url;
+      const previewUrl =
+        item?.file?.xs?.gif?.url ||
+        item?.file?.sm?.gif?.url ||
+        item?.images?.fixed_width_small?.url ||
+        item?.images?.preview_gif?.url ||
+        item?.media_formats?.tinygif?.url ||
+        url;
+      if (!url) return null;
+      return {
+        id: item?.id || item?.slug || url,
+        url,
+        previewUrl,
+        alt: item?.title || "GIF",
+      };
+    })
+    .filter(Boolean);
+};
+
+const fetchKlipySearch = async (query, signal) => {
+  if (!KLIPY_API_KEY) {
+    throw new Error("Missing Klipy API key.");
+  }
+  const params = new URLSearchParams({
+    q: query,
+    format_filter: "gif",
+  });
+  const res = await fetch(
+    `${KLIPY_API_BASE}/${encodeURIComponent(KLIPY_API_KEY)}/gifs/search?${params.toString()}`,
+    {
+      signal,
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = data?.message || `GIF request failed (${res.status}).`;
+    throw new Error(message);
+  }
+  if (data?.error || data?.status === "error") {
+    throw new Error(
+      data?.message || data?.error || "GIF request failed."
+    );
+  }
+  return normalizeKlipyGifs(data);
 };
 
 const tmdbClient = {
@@ -103,7 +175,13 @@ function RoomWatchPage({ code = "" }) {
   const voiceChatEnabledRef = useRef(voiceChatEnabled);
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
+  const [gifOpen, setGifOpen] = useState(false);
+  const [gifQuery, setGifQuery] = useState("");
+  const [gifResults, setGifResults] = useState([]);
+  const [gifLoading, setGifLoading] = useState(false);
+  const [gifError, setGifError] = useState("");
   const chatScrollRef = useRef(null);
+  const gifAbortRef = useRef(null);
   const hasTrackedPresenceRef = useRef(false);
   const [streamUrl, setStreamUrl] = useState(null);
   const audioContextRef = useRef(null);
@@ -1126,8 +1204,21 @@ function RoomWatchPage({ code = "" }) {
 
     channel.on("broadcast", { event: "chat" }, (payload) => {
       const data = payload?.payload || {};
-      const message = typeof data?.message === "string" ? data.message : "";
-      if (!message.trim()) return;
+      const rawMessage = data?.message;
+      const gifMessage =
+        rawMessage &&
+        typeof rawMessage === "object" &&
+        rawMessage.type === "gif" &&
+        rawMessage.url
+          ? {
+            type: "gif",
+            url: rawMessage.url,
+            previewUrl: rawMessage.previewUrl || rawMessage.url,
+            alt: rawMessage.alt || "GIF",
+          }
+          : null;
+      const messageText = typeof rawMessage === "string" ? rawMessage : "";
+      if (!messageText.trim() && !gifMessage) return;
       setChatMessages((prev) => {
         if (data?.id && prev.some((item) => item.id === data.id)) {
           return prev;
@@ -1137,7 +1228,7 @@ function RoomWatchPage({ code = "" }) {
           {
             id: data?.id || `${data?.from || "guest"}-${Date.now()}`,
             name: data?.name || "Guest",
-            message,
+            message: gifMessage || messageText,
             tone: data?.tone || "default",
           },
         ];
@@ -1525,6 +1616,61 @@ function RoomWatchPage({ code = "" }) {
     }
   };
 
+  const handleGifSearch = async () => {
+    const trimmed = gifQuery.trim();
+    if (!trimmed) {
+      setGifError("Enter a search to find GIFs.");
+      setGifResults([]);
+      return;
+    }
+    if (gifAbortRef.current) {
+      gifAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    gifAbortRef.current = controller;
+    setGifLoading(true);
+    setGifError("");
+    try {
+      const results = await fetchKlipySearch(trimmed, controller.signal);
+      setGifResults(results);
+      if (results.length === 0) {
+        setGifError("No GIFs found. Try another search.");
+      }
+    } catch (err) {
+      if (err.name !== "AbortError") {
+        setGifError(err.message || "Unable to load GIFs.");
+      }
+    } finally {
+      setGifLoading(false);
+    }
+  };
+
+  const handleSendGif = (gif) => {
+    if (!textChatEnabled || !supabase || !channelRef.current) return;
+    if (!gif?.url) return;
+    const messageId = `${clientIdRef.current}-${Date.now()}-${Math.random()
+      .toString(16)
+      .slice(2)}`;
+    const payload = {
+      id: messageId,
+      from: clientIdRef.current,
+      name: displayName || (isHost ? "Host" : "Guest"),
+      message: {
+        type: "gif",
+        url: gif.url,
+        previewUrl: gif.previewUrl || gif.url,
+        alt: gif.alt || "GIF",
+      },
+      tone: isHost ? "accent" : "default",
+    };
+    channelRef.current.send({
+      type: "broadcast",
+      event: "chat",
+      payload,
+    });
+    setGifOpen(false);
+  };
+
   const handleSendMessage = () => {
     if (!textChatEnabled || !supabase || !channelRef.current) return;
     const trimmed = chatInput.trim();
@@ -1549,6 +1695,12 @@ function RoomWatchPage({ code = "" }) {
   };
 
   const chatAvailable = textChatEnabled && channelReady;
+
+  useEffect(() => {
+    if (!chatAvailable) {
+      setGifOpen(false);
+    }
+  }, [chatAvailable]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
@@ -1822,7 +1974,77 @@ function RoomWatchPage({ code = "" }) {
                 )}
               </div>
               <div className="p-4 border-t border-slate-800 bg-slate-900/80">
+                {gifOpen && (
+                  <div className="mb-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 space-y-3">
+                    <form
+                      className="flex items-center gap-2"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        handleGifSearch();
+                      }}
+                    >
+                      <input
+                        type="text"
+                        value={gifQuery}
+                        onChange={(event) => {
+                          setGifQuery(event.target.value);
+                          if (gifError) setGifError("");
+                        }}
+                        placeholder="Search GIFs"
+                        className="flex-1 rounded-full border border-slate-800 bg-slate-900/60 px-4 py-2 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                      />
+                      <button
+                        type="submit"
+                        className="px-3 py-2 rounded-full bg-slate-800 text-slate-200 text-xs font-semibold hover:bg-slate-700 transition"
+                      >
+                        Search
+                      </button>
+                    </form>
+                    {gifLoading ? (
+                      <div className="text-xs text-slate-400">
+                        Loading GIFs...
+                      </div>
+                    ) : gifError ? (
+                      <div className="text-xs text-rose-300">{gifError}</div>
+                    ) : gifResults.length === 0 ? (
+                      <div className="text-xs text-slate-500">
+                        Search for a GIF to send to the room.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-3 gap-2 max-h-52 overflow-y-auto scrollbar-slate pr-1">
+                        {gifResults.map((gif) => (
+                          <button
+                            key={gif.id}
+                            type="button"
+                            onClick={() => handleSendGif(gif)}
+                            className="rounded-xl overflow-hidden border border-slate-800 hover:border-cyan-500 transition"
+                            title="Send GIF"
+                          >
+                            <img
+                              src={gif.previewUrl || gif.url}
+                              alt={gif.alt || "GIF"}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                            />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    disabled={!chatAvailable}
+                    onClick={() => setGifOpen((prev) => !prev)}
+                    aria-pressed={gifOpen}
+                    className={`px-3 py-2 rounded-full text-[11px] font-bold uppercase tracking-wider transition ${gifOpen
+                      ? "bg-cyan-500 text-slate-950"
+                      : "bg-slate-800/70 text-slate-300 hover:bg-slate-700"
+                      } disabled:opacity-50`}
+                  >
+                    GIF
+                  </button>
                   <input
                     type="text"
                     placeholder={
@@ -2045,6 +2267,8 @@ function RoomWatchPage({ code = "" }) {
 
 function ChatBubble({ name, message, tone = "default" }) {
   const isSystem = name === "System";
+  const isGif =
+    message && typeof message === "object" && message.type === "gif";
 
   return (
     <div className="flex flex-col gap-1 items-start">
@@ -2052,18 +2276,29 @@ function ChatBubble({ name, message, tone = "default" }) {
         {name}
       </span>
       <div
-        className={`rounded-2xl px-4 py-2.5 text-[13px] leading-relaxed relative ${isSystem
-          ? tone === "system-join"
-            ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
-            : tone === "system-leave"
-              ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
-              : "bg-slate-800/20 text-slate-500 font-medium border-none"
-          : tone === "accent"
-            ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
-            : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
+        className={`rounded-2xl ${isGif ? "p-0 bg-transparent border-none" : "px-4 py-2.5"} text-[13px] leading-relaxed relative ${isGif
+          ? ""
+          : isSystem
+            ? tone === "system-join"
+              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
+              : tone === "system-leave"
+                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
+                : "bg-slate-800/20 text-slate-500 font-medium border-none"
+            : tone === "accent"
+              ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
+              : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
           }`}
       >
-        {message}
+        {isGif ? (
+          <img
+            src={message.previewUrl || message.url}
+            alt={message.alt || "GIF"}
+            className="max-w-[420px] w-full rounded-2xl border border-slate-700/60"
+            loading="lazy"
+          />
+        ) : (
+          message
+        )}
       </div>
     </div>
   );
