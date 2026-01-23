@@ -2293,7 +2293,7 @@ function ChatBubble({ name, message, tone = "default" }) {
           <img
             src={message.previewUrl || message.url}
             alt={message.alt || "GIF"}
-            className="max-w-[420px] w-full rounded-2xl border border-slate-700/60"
+            className="w-full max-w-none rounded-3xl border border-slate-700/60"
             loading="lazy"
           />
         ) : (
@@ -2359,16 +2359,11 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const closeButtonRef = useRef(null);
   const isSignIn = mode === "signin";
 
   useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
-    closeButtonRef.current?.focus();
     return () => {
-      document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
   }, [onClose]);
@@ -2464,7 +2459,6 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
       className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur flex items-center justify-center p-4"
       role="dialog"
       aria-modal="true"
-      onClick={onClose}
     >
       <motion.div
         initial={{ y: 20, opacity: 0, scale: 0.98 }}
@@ -2472,7 +2466,6 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
         exit={{ y: 20, opacity: 0, scale: 0.98 }}
         transition={{ duration: 0.2, ease: "easeOut" }}
         className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 overflow-hidden"
-        onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800">
           <div>
@@ -2483,13 +2476,6 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
               {isSignIn ? "Sign in" : "Create your account"}
             </h3>
           </div>
-          <button
-            ref={closeButtonRef}
-            onClick={onClose}
-            className="px-3 py-1 rounded-full text-xs bg-slate-900 border border-slate-700"
-          >
-            Close
-          </button>
         </div>
         <form className="px-6 py-5 space-y-4" onSubmit={handleSubmit}>
           {formError && (
