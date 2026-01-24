@@ -119,6 +119,13 @@ const formatRuntime = (details, mediaType) => {
   return details?.runtime ? `${details.runtime} min` : null;
 };
 
+const formatClock = (seconds) => {
+  if (!Number.isFinite(seconds)) return "0:00";
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
 function RoomWatchPage({ code = "" }) {
   const [details, setDetails] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -183,8 +190,18 @@ function RoomWatchPage({ code = "" }) {
   const chatScrollRef = useRef(null);
   const gifAbortRef = useRef(null);
   const hasTrackedPresenceRef = useRef(false);
+  const [hasUnreadMessages, setHasUnreadMessages] = useState(false);
+  const lastMessageIdRef = useRef(null);
+  const isChatAtBottomRef = useRef(true);
   const [streamUrl, setStreamUrl] = useState(null);
   const audioContextRef = useRef(null);
+  const videoLoadedAnnouncementRef = useRef(null);
+  const lastActionAnnouncementRef = useRef({
+    play: 0,
+    pause: 0,
+    seek: 0,
+    seekTime: 0,
+  });
 
   // Video player synchronization state
   const [playerShouldPlay, setPlayerShouldPlay] = useState(null);
@@ -248,9 +265,13 @@ function RoomWatchPage({ code = "" }) {
   }, []);
 
   useEffect(() => {
-    if (chatScrollRef.current) {
-      chatScrollRef.current.scrollTo({
-        top: chatScrollRef.current.scrollHeight,
+    const el = chatScrollRef.current;
+    if (!el || chatMessages.length === 0) return;
+    const last = chatMessages[chatMessages.length - 1];
+    const isFromSelf = last?.from && last.from === clientIdRef.current;
+    if (isChatAtBottomRef.current || isFromSelf) {
+      el.scrollTo({
+        top: el.scrollHeight,
         behavior: 'smooth'
       });
     }
@@ -449,6 +470,43 @@ function RoomWatchPage({ code = "" }) {
   useEffect(() => {
     setVideoReady(false);
   }, [streamUrl]);
+  const sendSystemMessage = (message, tone = "system-info") => {
+    const payload = {
+      id: `system-${clientIdRef.current}-${Date.now()}-${Math.random()
+        .toString(16)
+        .slice(2)}`,
+      from: clientIdRef.current,
+      name: "System",
+      message,
+      tone,
+    };
+    if (channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "chat",
+        payload,
+      });
+      return;
+    }
+    setChatMessages((prev) => [...prev, payload]);
+  };
+
+  const shouldAnnounceAction = (key, minIntervalMs) => {
+    const now = Date.now();
+    if (now - lastActionAnnouncementRef.current[key] < minIntervalMs) {
+      return false;
+    }
+    lastActionAnnouncementRef.current[key] = now;
+    return true;
+  };
+
+  const handleVideoMetadata = (duration) => {
+    if (!streamUrl || !Number.isFinite(duration) || duration <= 0) return;
+    if (videoLoadedAnnouncementRef.current === streamUrl) return;
+    videoLoadedAnnouncementRef.current = streamUrl;
+    const name = displayName || (isHost ? "Host" : "Guest");
+    sendSystemMessage(`Video loaded for ${name}.`);
+  };
 
   useEffect(() => {
     roomPausedRef.current = roomPaused;
@@ -459,10 +517,36 @@ function RoomWatchPage({ code = "" }) {
     selectedEpisodeRef.current = selectedEpisode;
   }, [selectedSeason, selectedEpisode]);
 
+  // Removed duplicate auto-scroll that forced the chat to bottom on every message.
+
+  const updateChatScrollState = () => {
+    const el = chatScrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+    isChatAtBottomRef.current = atBottom;
+    if (atBottom) {
+      setHasUnreadMessages(false);
+    }
+  };
+
   useEffect(() => {
-    if (!chatScrollRef.current) return;
-    chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
-  }, [chatMessages]);
+    if (!chatMessages.length) return;
+    const last = chatMessages[chatMessages.length - 1];
+    if (!last || last.id === lastMessageIdRef.current) return;
+    lastMessageIdRef.current = last.id;
+
+    const isFromSelf = last.from && last.from === clientIdRef.current;
+    if (!isFromSelf && (!isChatAtBottomRef.current || activeTab !== "chat")) {
+      setHasUnreadMessages(true);
+    }
+  }, [chatMessages, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "chat") {
+      updateChatScrollState();
+    }
+  }, [activeTab]);
+
 
   const cleanupPeer = (peerId) => {
     const pc = peerConnectionsRef.current.get(peerId);
@@ -1227,6 +1311,7 @@ function RoomWatchPage({ code = "" }) {
           ...prev,
           {
             id: data?.id || `${data?.from || "guest"}-${Date.now()}`,
+            from: data?.from || null,
             name: data?.name || "Guest",
             message: gifMessage || messageText,
             tone: data?.tone || "default",
@@ -1252,6 +1337,7 @@ function RoomWatchPage({ code = "" }) {
             ...prev,
             {
               id: `system-join-${p.id || Math.random()}-${Date.now()}`,
+              from: p.id || null,
               name: "System",
               message: `${name} joined the room`,
               tone: "system-join",
@@ -1278,6 +1364,7 @@ function RoomWatchPage({ code = "" }) {
             ...prev,
             {
               id: `system-leave-${p.id || Math.random()}-${Date.now()}`,
+              from: p.id || null,
               name: "System",
               message: `${name} left the room`,
               tone: "system-leave",
@@ -1316,6 +1403,7 @@ function RoomWatchPage({ code = "" }) {
           ...prev,
           {
             id: `system-media-${Date.now()}-${Math.random()}`,
+            from: data?.from || null,
             name: "System",
             message: newMessage,
             tone: "system-join",
@@ -1454,6 +1542,7 @@ function RoomWatchPage({ code = "" }) {
       ...prev,
       {
         id: `system-media-${Date.now()}-${Math.random()}`,
+        from: clientIdRef.current,
         name: "System",
         message: `${name} changed to Season ${newSeason} Episode ${newEpisode}`,
         tone: "system-join",
@@ -1513,6 +1602,11 @@ function RoomWatchPage({ code = "" }) {
         playbackRate: 1.0
       },
     });
+
+    if (shouldAnnounceAction("play", 1500)) {
+      const name = displayName || (isHost ? "Host" : "Guest");
+      sendSystemMessage(`${name} played the video.`);
+    }
   };
 
   const handleLocalPause = () => {
@@ -1539,11 +1633,20 @@ function RoomWatchPage({ code = "" }) {
         playbackRate: 1.0
       },
     });
+
+    if (shouldAnnounceAction("pause", 1500)) {
+      const name = displayName || (isHost ? "Host" : "Guest");
+      sendSystemMessage(`${name} paused the video.`);
+    }
   };
 
   const handleLocalSeek = (time) => {
     if (!channelRef.current) return;
 
+    const previousTime =
+      playbackStateRef.current.lastKnownTime ||
+      lastActionAnnouncementRef.current.seekTime ||
+      0;
     // Update local playback state
     const video = videoPlayerRef.current;
     const isPlaying = !video?.isPaused?.();
@@ -1566,6 +1669,14 @@ function RoomWatchPage({ code = "" }) {
         playbackRate: 1.0
       },
     });
+
+    const delta = Math.abs(time - previousTime);
+    if (delta >= 5 && shouldAnnounceAction("seek", 3000)) {
+      const name = displayName || (isHost ? "Host" : "Guest");
+      const direction = time < previousTime ? "rewound to" : "skipped to";
+      sendSystemMessage(`${name} ${direction} ${formatClock(time)}.`);
+      lastActionAnnouncementRef.current.seekTime = time;
+    }
   };
   // --- End Video Player Sync Handlers ---
   const playerUrl =
@@ -1728,8 +1839,8 @@ function RoomWatchPage({ code = "" }) {
         </div>
       </header>
 
-      <main className="relative max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-10 pt-2 pb-8">
-        <div className="grid gap-10 lg:grid-cols-[2.5fr_0.5fr]">
+      <main className="relative max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-10 pt-2 pb-8 overflow-x-hidden">
+        <div className="grid gap-12 sm:gap-14 lg:gap-10 pb-12 sm:pb-16 xl:pb-0 lg:grid-cols-[2.5fr_0.5fr]">
           <section className={`space-y-6 transition-all duration-500 flex flex-col ${isTheaterMode ? "lg:col-span-2" : ""}`}>
             <motion.div
               initial="hidden"
@@ -1864,6 +1975,7 @@ function RoomWatchPage({ code = "" }) {
                         onPlay={handleLocalPlay}
                         onPause={handleLocalPause}
                         onSeeking={handleLocalSeek}
+                        onLoadedMetadata={handleVideoMetadata}
                         onTimeUpdate={() => {
                           // Mark video as ready on first time update
                           if (!videoReady) {
@@ -1936,8 +2048,8 @@ function RoomWatchPage({ code = "" }) {
             </div>
           </section>
 
-          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-[600px] lg:h-0 lg:min-h-full`}>
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-full overflow-hidden shadow-2xl min-h-[450px]">
+          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-[600px] lg:h-0 lg:min-h-full w-full min-w-0`}>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-full overflow-hidden shadow-2xl min-h-[450px] w-full max-w-full">
               <div className="px-6 py-4 border-b border-slate-800/50 bg-slate-900/60 flex items-center justify-between">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-500">
@@ -1948,6 +2060,12 @@ function RoomWatchPage({ code = "" }) {
                     <span className="text-[11px] font-medium text-slate-300">
                       Connected
                     </span>
+                    {hasUnreadMessages && (
+                      <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-cyan-400/40 bg-cyan-500/20 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-cyan-200">
+                        <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-ping" />
+                        New
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="px-2 py-1 rounded bg-slate-800/50 border border-slate-700/50 text-[10px] font-bold text-slate-400">
@@ -1956,6 +2074,7 @@ function RoomWatchPage({ code = "" }) {
               </div>
               <div
                 ref={chatScrollRef}
+                onScroll={updateChatScrollState}
                 className="flex-1 px-4 py-4 space-y-4 overflow-y-auto scrollbar-slate"
               >
                 {chatMessages.length === 0 ? (
@@ -2076,7 +2195,7 @@ function RoomWatchPage({ code = "" }) {
         </div>
 
         {/* Details Section Moved Below Grid */}
-        <div className={`mt-10 rounded-3xl border border-slate-800/50 bg-slate-900/40 backdrop-blur-xl p-6 lg:p-8 transition-all duration-500 overflow-hidden relative group/meta w-full max-w-[1720px] mx-auto ${isTheaterMode ? "opacity-20 lg:hover:opacity-100 origin-top" : "opacity-100"} ${activeTab !== 'details' ? 'hidden lg:block' : 'block'}`}>
+        <div className={`mt-16 sm:mt-20 lg:mt-12 rounded-3xl border border-slate-800/50 bg-slate-900/40 backdrop-blur-xl p-6 lg:p-8 transition-all duration-500 overflow-hidden relative group/meta w-full max-w-[1720px] mx-auto ${isTheaterMode ? "opacity-20 lg:hover:opacity-100 origin-top" : "opacity-100"} ${activeTab !== 'details' ? 'hidden lg:block' : 'block'}`}>
           {/* Decorative background element */}
           <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 blur-[100px] rounded-full pointer-events-none" />
 

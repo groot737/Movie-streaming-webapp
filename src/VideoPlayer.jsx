@@ -9,7 +9,8 @@ export const VideoPlayer = forwardRef(({
     onPlay = null,
     onPause = null,
     onSeeking = null,
-    onTimeUpdate = null
+    onTimeUpdate = null,
+    onLoadedMetadata = null
 }, ref) => {
     const videoRef = useRef(null);
     const hlsRef = useRef(null);
@@ -17,6 +18,8 @@ export const VideoPlayer = forwardRef(({
     const lastSeekTimeRef = useRef(null);
     const seekTimeoutRef = useRef(null);
     const containerRef = useRef(null);
+    const shouldPlayRef = useRef(shouldPlay);
+    const autoplayRetryRef = useRef(false);
 
     // Custom controls state
     const [isPlaying, setIsPlaying] = useState(false);
@@ -116,9 +119,30 @@ export const VideoPlayer = forwardRef(({
         if (!video || shouldPlay === null) return;
 
         isRemoteActionRef.current = true;
+        shouldPlayRef.current = shouldPlay;
+
+        const attemptPlay = async (reason) => {
+            try {
+                await video.play();
+            } catch (err) {
+                if (!video.muted && !autoplayRetryRef.current) {
+                    autoplayRetryRef.current = true;
+                    video.muted = true;
+                    setIsMuted(true);
+                    try {
+                        await video.play();
+                        return;
+                    } catch (retryErr) {
+                        console.warn(`Autoplay retry failed (${reason}):`, retryErr);
+                    }
+                } else {
+                    console.warn(`Remote play failed (${reason}):`, err);
+                }
+            }
+        };
 
         if (shouldPlay && video.paused) {
-            video.play().catch(err => console.warn('Remote play failed:', err));
+            attemptPlay('shouldPlay');
         } else if (!shouldPlay && !video.paused) {
             video.pause();
         }
@@ -128,6 +152,10 @@ export const VideoPlayer = forwardRef(({
         }, 500);
 
         return () => clearTimeout(timeout);
+    }, [shouldPlay]);
+
+    useEffect(() => {
+        shouldPlayRef.current = shouldPlay;
     }, [shouldPlay]);
 
     // Handle external seek control
@@ -196,6 +224,44 @@ export const VideoPlayer = forwardRef(({
 
         const handleLoadedMetadata = () => {
             setDuration(video.duration);
+            if (onLoadedMetadata) {
+                onLoadedMetadata(video.duration);
+            }
+            if (shouldPlayRef.current && video.paused) {
+                video.play().catch(async (err) => {
+                    if (!video.muted && !autoplayRetryRef.current) {
+                        autoplayRetryRef.current = true;
+                        video.muted = true;
+                        setIsMuted(true);
+                        try {
+                            await video.play();
+                            return;
+                        } catch (retryErr) {
+                            console.warn('Autoplay retry after metadata failed:', retryErr);
+                        }
+                    }
+                    console.warn('Autoplay after metadata failed:', err);
+                });
+            }
+        };
+
+        const handleCanPlay = () => {
+            if (shouldPlayRef.current && video.paused) {
+                video.play().catch(async (err) => {
+                    if (!video.muted && !autoplayRetryRef.current) {
+                        autoplayRetryRef.current = true;
+                        video.muted = true;
+                        setIsMuted(true);
+                        try {
+                            await video.play();
+                            return;
+                        } catch (retryErr) {
+                            console.warn('Autoplay retry on canplay failed:', retryErr);
+                        }
+                    }
+                    console.warn('Autoplay on canplay failed:', err);
+                });
+            }
         };
 
         const handleProgress = () => {
@@ -213,6 +279,7 @@ export const VideoPlayer = forwardRef(({
         video.addEventListener('seeking', handleSeeking);
         video.addEventListener('timeupdate', handleTimeUpdate);
         video.addEventListener('loadedmetadata', handleLoadedMetadata);
+        video.addEventListener('canplay', handleCanPlay);
         video.addEventListener('progress', handleProgress);
 
         return () => {
@@ -221,12 +288,13 @@ export const VideoPlayer = forwardRef(({
             video.removeEventListener('seeking', handleSeeking);
             video.removeEventListener('timeupdate', handleTimeUpdate);
             video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+            video.removeEventListener('canplay', handleCanPlay);
             video.removeEventListener('progress', handleProgress);
             if (seekTimeoutRef.current) {
                 clearTimeout(seekTimeoutRef.current);
             }
         };
-    }, [onPlay, onPause, onSeeking, onTimeUpdate]);
+    }, [onPlay, onPause, onSeeking, onTimeUpdate, onLoadedMetadata]);
 
     // Custom control handlers
     const togglePlay = useCallback(() => {
