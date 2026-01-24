@@ -449,7 +449,8 @@ function RoomWatchPage({ code = "" }) {
 
       if (mediaType === 'movie') {
         // For movies, use the custom streaming endpoint with media_id
-        const streamingUrl = `https://p01--streaming-link--gkhzsvnjqjk8.code.run/m3u8?mediaId=${mediaId}`;
+        const encodedMediaId = encodeURIComponent(mediaId);
+        const streamingUrl = `https://p01--streaming-link--gkhzsvnjqjk8.code.run/m3u8?mediaId=${encodedMediaId}`;
         setStreamUrl(streamingUrl);
       } else {
         // For TV shows, find the episode and use custom endpoint with episodeId
@@ -457,7 +458,9 @@ function RoomWatchPage({ code = "" }) {
         const episodeId = ep?.id;
 
         if (episodeId) {
-          const streamingUrl = `https://p01--streaming-link--gkhzsvnjqjk8.code.run/m3u8?mediaId=${mediaId}&episodeId=${episodeId}`;
+          const encodedMediaId = encodeURIComponent(mediaId);
+          const encodedEpisodeId = encodeURIComponent(episodeId);
+          const streamingUrl = `https://p01--streaming-link--gkhzsvnjqjk8.code.run/m3u8?mediaId=${encodedMediaId}&episodeId=${encodedEpisodeId}`;
           setStreamUrl(streamingUrl);
         }
       }
@@ -1840,7 +1843,7 @@ function RoomWatchPage({ code = "" }) {
       </header>
 
       <main className="relative max-w-[1720px] mx-auto px-4 sm:px-6 lg:px-10 pt-2 pb-8 overflow-x-hidden">
-        <div className="grid gap-12 sm:gap-14 lg:gap-10 pb-12 sm:pb-16 xl:pb-0 lg:grid-cols-[2.5fr_0.5fr]">
+        <div className="grid gap-12 sm:gap-14 lg:gap-10 pb-12 sm:pb-16 xl:pb-0 lg:grid-cols-[2.1fr_0.9fr]">
           <section className={`space-y-6 transition-all duration-500 flex flex-col ${isTheaterMode ? "lg:col-span-2" : ""}`}>
             <motion.div
               initial="hidden"
@@ -2048,8 +2051,8 @@ function RoomWatchPage({ code = "" }) {
             </div>
           </section>
 
-          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-[600px] lg:h-0 lg:min-h-full w-full min-w-0`}>
-            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-full overflow-hidden shadow-2xl min-h-[450px] w-full max-w-full">
+          <aside className={`transition-all duration-500 ${isTheaterMode ? "opacity-0 scale-95 pointer-events-none translate-x-12 absolute" : "opacity-100 scale-100 relative translate-x-0"} ${activeTab !== 'chat' ? 'hidden lg:flex flex-col' : 'flex flex-col'} h-[650px] lg:h-0 lg:min-h-full w-full min-w-0`}>
+            <div className="rounded-3xl border border-slate-800 bg-slate-900/40 backdrop-blur-xl flex flex-col h-full overflow-hidden shadow-2xl min-h-[480px] w-full max-w-full">
               <div className="px-6 py-4 border-b border-slate-800/50 bg-slate-900/60 flex items-center justify-between">
                 <div>
                   <div className="text-[10px] uppercase tracking-[0.2em] font-bold text-slate-500">
