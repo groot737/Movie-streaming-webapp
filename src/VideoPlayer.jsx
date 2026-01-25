@@ -10,7 +10,9 @@ export const VideoPlayer = forwardRef(({
     onPause = null,
     onSeeking = null,
     onTimeUpdate = null,
-    onLoadedMetadata = null
+    onLoadedMetadata = null,
+    loadingMessages = null,
+    loadingMessageInterval = 2200
 }, ref) => {
     const videoRef = useRef(null);
     const hlsRef = useRef(null);
@@ -35,6 +37,21 @@ export const VideoPlayer = forwardRef(({
     const [showForward, setShowForward] = useState(false);
     const lastClickTimeRef = useRef(0);
     const clickTimeoutRef = useRef(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [loadingIndex, setLoadingIndex] = useState(0);
+    const loadingTimerRef = useRef(null);
+    const defaultLoadingMessages = useRef([
+        'Just a sec, getting things ready…',
+        'Grab some popcorn 🍿',
+        'Warming up the screen…',
+        'Almost there…',
+        'Movie magic loading…',
+        'Setting things up for you…',
+        'Getting comfy…',
+        'Lights dimming…',
+        'Hang tight, starting soon!',
+        'Good things take a moment 🙂'
+    ]);
 
     // Expose video control methods to parent
     useImperativeHandle(ref, () => ({
@@ -113,6 +130,34 @@ export const VideoPlayer = forwardRef(({
         };
     }, [src]);
 
+    useEffect(() => {
+        setIsLoading(Boolean(src));
+        setLoadingIndex(0);
+    }, [src]);
+
+    useEffect(() => {
+        if (!isLoading) {
+            if (loadingTimerRef.current) {
+                clearInterval(loadingTimerRef.current);
+                loadingTimerRef.current = null;
+            }
+            return;
+        }
+        const messages = Array.isArray(loadingMessages) && loadingMessages.length
+            ? loadingMessages
+            : defaultLoadingMessages.current;
+        if (messages.length <= 1) return;
+        loadingTimerRef.current = setInterval(() => {
+            setLoadingIndex((prev) => (prev + 1) % messages.length);
+        }, Math.max(800, loadingMessageInterval));
+        return () => {
+            if (loadingTimerRef.current) {
+                clearInterval(loadingTimerRef.current);
+                loadingTimerRef.current = null;
+            }
+        };
+    }, [isLoading, loadingMessages, loadingMessageInterval]);
+
     // Handle external play/pause control
     useEffect(() => {
         const video = videoRef.current;
@@ -186,6 +231,7 @@ export const VideoPlayer = forwardRef(({
 
         const handlePlay = () => {
             setIsPlaying(true);
+            setIsLoading(false);
             if (!isRemoteActionRef.current && onPlay) {
                 onPlay();
             }
@@ -224,6 +270,7 @@ export const VideoPlayer = forwardRef(({
 
         const handleLoadedMetadata = () => {
             setDuration(video.duration);
+            setIsLoading(false);
             if (onLoadedMetadata) {
                 onLoadedMetadata(video.duration);
             }
@@ -246,6 +293,7 @@ export const VideoPlayer = forwardRef(({
         };
 
         const handleCanPlay = () => {
+            setIsLoading(false);
             if (shouldPlayRef.current && video.paused) {
                 video.play().catch(async (err) => {
                     if (!video.muted && !autoplayRetryRef.current) {
@@ -273,6 +321,9 @@ export const VideoPlayer = forwardRef(({
                 }
             }
         };
+        const handleWaiting = () => setIsLoading(true);
+        const handleStalled = () => setIsLoading(true);
+        const handlePlaying = () => setIsLoading(false);
 
         video.addEventListener('play', handlePlay);
         video.addEventListener('pause', handlePause);
@@ -281,6 +332,9 @@ export const VideoPlayer = forwardRef(({
         video.addEventListener('loadedmetadata', handleLoadedMetadata);
         video.addEventListener('canplay', handleCanPlay);
         video.addEventListener('progress', handleProgress);
+        video.addEventListener('waiting', handleWaiting);
+        video.addEventListener('stalled', handleStalled);
+        video.addEventListener('playing', handlePlaying);
 
         return () => {
             video.removeEventListener('play', handlePlay);
@@ -290,6 +344,9 @@ export const VideoPlayer = forwardRef(({
             video.removeEventListener('loadedmetadata', handleLoadedMetadata);
             video.removeEventListener('canplay', handleCanPlay);
             video.removeEventListener('progress', handleProgress);
+            video.removeEventListener('waiting', handleWaiting);
+            video.removeEventListener('stalled', handleStalled);
+            video.removeEventListener('playing', handlePlaying);
             if (seekTimeoutRef.current) {
                 clearTimeout(seekTimeoutRef.current);
             }
@@ -451,6 +508,33 @@ export const VideoPlayer = forwardRef(({
                 playsInline
                 onClick={handleVideoClick}
             />
+
+            {isLoading && (
+                <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-black/95 backdrop-blur-sm">
+                    <div className="flex flex-col items-center gap-6 max-w-md text-center p-6">
+                        <div className="relative">
+                            <div className="w-16 h-16 border-4 border-cyan-500/20 border-t-cyan-500 rounded-full animate-spin" />
+                            <div className="absolute inset-0 flex items-center justify-center">
+                                <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+                            </div>
+                        </div>
+
+
+
+                        <div className="min-h-[3rem] flex items-center justify-center">
+                            <p className="text-lg md:text-xl text-slate-300 font-sans font-medium leading-relaxed">
+                                <span className="mr-2 text-cyan-500">{'>'}</span>
+                                <span className="animate-[typing_2s_steps(20,_end)]">
+                                    {(Array.isArray(loadingMessages) && loadingMessages.length
+                                        ? loadingMessages
+                                        : defaultLoadingMessages.current)[loadingIndex]}
+                                </span>
+                                <span className="ml-1 inline-block w-2.5 h-5 bg-cyan-500 animate-pulse align-middle" />
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Custom Controls */}
             <div className={`absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent transition-opacity duration-300 ${showControls ? 'opacity-100' : 'opacity-0'}`}>

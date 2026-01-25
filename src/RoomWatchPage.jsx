@@ -473,6 +473,8 @@ function RoomWatchPage({ code = "" }) {
   useEffect(() => {
     setVideoReady(false);
   }, [streamUrl]);
+
+ 
   const sendSystemMessage = (message, tone = "system-info") => {
     const payload = {
       id: `system-${clientIdRef.current}-${Date.now()}-${Math.random()
