@@ -2483,6 +2483,11 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
   const [confirmPassword, setConfirmPassword] = useState("");
   const [formError, setFormError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryError, setRecoveryError] = useState("");
+  const [recoveryMessage, setRecoveryMessage] = useState("");
+  const [isRecovering, setIsRecovering] = useState(false);
   const isSignIn = mode === "signin";
 
   useEffect(() => {
@@ -2498,10 +2503,18 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
     setPassword("");
     setConfirmPassword("");
     setIsSubmitting(false);
+    setShowRecovery(false);
+    setRecoveryEmail("");
+    setRecoveryError("");
+    setRecoveryMessage("");
+    setIsRecovering(false);
   }, [mode]);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    if (showRecovery) {
+      return;
+    }
     const trimmedEmail = email.trim();
     const trimmedUsername = username.trim();
     const passwordHasLetter = /[A-Za-z]/.test(password);
@@ -2575,6 +2588,50 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
     }
   };
 
+  const handleRecovery = async (event) => {
+    event.preventDefault();
+    const trimmedEmail = recoveryEmail.trim().toLowerCase();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!trimmedEmail) {
+      setRecoveryError("Email is required.");
+      setRecoveryMessage("");
+      return;
+    }
+    if (!emailPattern.test(trimmedEmail)) {
+      setRecoveryError("Enter a valid email address.");
+      setRecoveryMessage("");
+      return;
+    }
+
+    setRecoveryError("");
+    setRecoveryMessage("");
+    setIsRecovering(true);
+
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/recover`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ email: trimmedEmail }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setRecoveryError(
+          data?.message || "Unable to start password recovery. Please try again."
+        );
+        return;
+      }
+      setRecoveryMessage(
+        data?.message || "Recovery email sent. Please check your inbox."
+      );
+    } catch (err) {
+      setRecoveryError("Network error. Please try again.");
+    } finally {
+      setIsRecovering(false);
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -2597,17 +2654,34 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
               GioStream
             </div>
             <h3 className="text-lg font-semibold">
-              {isSignIn ? "Sign in" : "Create your account"}
+              {isSignIn
+                ? showRecovery
+                  ? "Recover your account"
+                  : "Sign in"
+                : "Create your account"}
             </h3>
           </div>
         </div>
-        <form className="px-6 py-5 space-y-4" onSubmit={handleSubmit}>
-          {formError && (
+        <form
+          className="px-6 py-5 space-y-4"
+          onSubmit={showRecovery ? handleRecovery : handleSubmit}
+        >
+          {!showRecovery && formError && (
             <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
               {formError}
             </div>
           )}
-          {!isSignIn && (
+          {showRecovery && recoveryError && (
+            <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
+              {recoveryError}
+            </div>
+          )}
+          {showRecovery && recoveryMessage && (
+            <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200">
+              {recoveryMessage}
+            </div>
+          )}
+          {!showRecovery && !isSignIn && (
             <div className="space-y-2">
               <label className="text-xs text-slate-400" htmlFor="auth-username">
                 Username
@@ -2627,29 +2701,67 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
               />
             </div>
           )}
-          <div className="space-y-2">
-            <label className="text-xs text-slate-400" htmlFor="auth-email">
-              Email address
-            </label>
-            <input
-              id="auth-email"
-              type="email"
-              autoComplete="email"
-              required
-              value={email}
-              onChange={(event) => {
-                setEmail(event.target.value);
-                setFormError("");
+          {!showRecovery && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400" htmlFor="auth-email">
+                Email address
+              </label>
+              <input
+                id="auth-email"
+                type="email"
+                autoComplete="email"
+                required
+                value={email}
+                onChange={(event) => {
+                  setEmail(event.target.value);
+                  setFormError("");
+                }}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="you@example.com"
+              />
+            </div>
+          )}
+          {!showRecovery && isSignIn && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowRecovery(true);
+                setRecoveryEmail(email);
+                setRecoveryError("");
+                setRecoveryMessage("");
               }}
-              className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
-              placeholder="you@example.com"
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-xs text-slate-400" htmlFor="auth-password">
+              className="text-xs text-cyan-300 hover:text-cyan-200 transition text-left"
+            >
+              Forgot password?
+            </button>
+          )}
+          {showRecovery && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400" htmlFor="auth-recover">
+                Recovery email
+              </label>
+              <input
+                id="auth-recover"
+                type="email"
+                autoComplete="email"
+                required
+                value={recoveryEmail}
+                onChange={(event) => {
+                  setRecoveryEmail(event.target.value);
+                  setRecoveryError("");
+                  setRecoveryMessage("");
+                }}
+                className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                placeholder="you@example.com"
+              />
+            </div>
+          )}
+          {!showRecovery && (
+            <div className="space-y-2">
+              <label className="text-xs text-slate-400" htmlFor="auth-password">
               Password
-            </label>
-            <input
+              </label>
+              <input
               id="auth-password"
               type="password"
               autoComplete={isSignIn ? "current-password" : "new-password"}
@@ -2662,8 +2774,9 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
               className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               placeholder="••••••••"
             />
-          </div>
-          {!isSignIn && (
+            </div>
+          )}
+          {!showRecovery && !isSignIn && (
             <div className="space-y-2">
               <label className="text-xs text-slate-400" htmlFor="auth-confirm">
                 Confirm password
@@ -2683,33 +2796,57 @@ function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
               />
             </div>
           )}
-          {!isSignIn && (
+          {!showRecovery && !isSignIn && (
             <div className="text-xs text-slate-500">
               Password must be 8+ characters and include a letter and a number.
             </div>
           )}
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
-          >
-            {isSubmitting
-              ? isSignIn
-                ? "Signing in..."
-                : "Creating account..."
-              : isSignIn
-                ? "Sign in"
-                : "Create account"}
-          </button>
-          <button
-            type="button"
-            onClick={onToggleMode}
-            className="w-full text-xs text-slate-400 hover:text-slate-200 transition"
-          >
-            {isSignIn
-              ? "New here? Create an account"
-              : "Already have an account? Sign in"}
-          </button>
+          {showRecovery ? (
+            <button
+              type="submit"
+              disabled={isRecovering}
+              className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+            >
+              {isRecovering ? "Sending..." : "Send recovery email"}
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={isSubmitting}
+              className="w-full px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+            >
+              {isSubmitting
+                ? isSignIn
+                  ? "Signing in..."
+                  : "Creating account..."
+                : isSignIn
+                  ? "Sign in"
+                  : "Create account"}
+            </button>
+          )}
+          {showRecovery ? (
+            <button
+              type="button"
+              onClick={() => {
+                setShowRecovery(false);
+                setRecoveryError("");
+                setRecoveryMessage("");
+              }}
+              className="w-full text-xs text-slate-400 hover:text-slate-200 transition"
+            >
+              Back to sign in
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onToggleMode}
+              className="w-full text-xs text-slate-400 hover:text-slate-200 transition"
+            >
+              {isSignIn
+                ? "New here? Create an account"
+                : "Already have an account? Sign in"}
+            </button>
+          )}
         </form>
       </motion.div>
     </motion.div>

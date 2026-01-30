@@ -1,7 +1,9 @@
 import bcrypt from "bcrypt";
+import crypto from "crypto";
 import cors from "cors";
 import express from "express";
 import session from "express-session";
+import nodemailer from "nodemailer";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import connectPgSimple from "connect-pg-simple";
@@ -9,6 +11,26 @@ import OpenAI from "openai";
 import { pool } from "./db.js";
 
 let cachedApp;
+let resetTableReady = false;
+
+const ensureResetTable = async () => {
+  if (resetTableReady) {
+    return;
+  }
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );`
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS password_reset_tokens_token_hash_idx ON password_reset_tokens (token_hash);"
+  );
+  resetTableReady = true;
+};
 
 const configurePassport = () => {
   if (passport._strategy("local")) {
@@ -94,6 +116,7 @@ const requireAuth = (req, res, next) => {
 const TMDB_BASE_URL = "https://api.themoviedb.org/3";
 const SHARE_CODE_LENGTH = 6;
 const SHARE_CODE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+const RECOVERY_TOKEN_TTL_MS = 1000 * 60 * 60;
 const TMDB_CATEGORY_MAP = {
   movie: {
     trending: "/trending/movie/week",
@@ -197,6 +220,21 @@ export const getAuthApp = () => {
   const openAiKey = process.env.OPENAI_KEY || "";
   const openaiClient = openAiKey ? new OpenAI({ apiKey: openAiKey }) : null;
   const tmdbKey = process.env.TMDB_API_KEY || process.env.VITE_TMDB_API_KEY || "";
+  const smtpHost = process.env.SMTP_HOST || "";
+  const smtpPort = Number(process.env.SMTP_PORT || 587);
+  const smtpUser = process.env.SMTP_USER || "";
+  const smtpPass = process.env.SMTP_PASS || "";
+  const smtpFrom = process.env.SMTP_FROM || smtpUser;
+
+  const mailer =
+    smtpHost && smtpUser && smtpPass
+      ? nodemailer.createTransport({
+          host: smtpHost,
+          port: smtpPort,
+          secure: smtpPort === 465,
+          auth: { user: smtpUser, pass: smtpPass },
+        })
+      : null;
 
   const buildTmdbUrl = (path, params = {}) => {
     const url = new URL(`${TMDB_BASE_URL}${path}`);
@@ -366,6 +404,125 @@ export const getAuthApp = () => {
         return res.json({ user });
       });
     })(req, res, next);
+  });
+
+  app.post("/api/auth/recover", async (req, res, next) => {
+    const normalizedEmail = (req.body?.email || "").trim().toLowerCase();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+    if (!normalizedEmail) {
+      return res.status(400).json({ message: "Email is required." });
+    }
+    if (!emailPattern.test(normalizedEmail)) {
+      return res.status(400).json({ message: "Enter a valid email address." });
+    }
+    if (!mailer || !smtpFrom) {
+      return res
+        .status(500)
+        .json({ message: "Email service is not configured." });
+    }
+
+    try {
+      await ensureResetTable();
+      const existing = await pool.query(
+        "SELECT id FROM users WHERE email = $1",
+        [normalizedEmail]
+      );
+      if (!existing.rows.length) {
+        return res
+          .status(404)
+          .json({ message: "No account found with that email." });
+      }
+      const userId = existing.rows[0].id;
+      const token = crypto.randomBytes(32).toString("hex");
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const expiresAt = new Date(Date.now() + RECOVERY_TOKEN_TTL_MS);
+
+      await pool.query(
+        "DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < NOW()",
+        [userId]
+      );
+      await pool.query(
+        "INSERT INTO password_reset_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)",
+        [userId, tokenHash, expiresAt]
+      );
+
+      const origin =
+        process.env.CLIENT_ORIGIN ||
+        `${req.protocol}://${req.get("host") || "localhost"}`;
+      const resetLink = `${origin}/#reset-password?token=${token}`;
+
+      await mailer.sendMail({
+        from: smtpFrom,
+        to: normalizedEmail,
+        subject: "Reset your GioStream password",
+        text: `You requested a password reset. Use this link to set a new password: ${resetLink}`,
+        html: `
+          <p>You requested a password reset.</p>
+          <p><a href="${resetLink}">Click here to reset your password</a></p>
+          <p>If you did not request this, you can ignore this email.</p>
+        `,
+      });
+
+      return res.json({
+        ok: true,
+        message: "Recovery email sent. Please check your inbox.",
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/auth/reset", async (req, res, next) => {
+    const token = (req.body?.token || "").trim();
+    const newPassword = req.body?.newPassword || "";
+    const confirmPassword = req.body?.confirmPassword || "";
+
+    if (!token) {
+      return res.status(400).json({ message: "Recovery token is required." });
+    }
+    if (!newPassword) {
+      return res.status(400).json({ message: "New password is required." });
+    }
+    if (!passwordMeetsPolicy(newPassword)) {
+      return res.status(400).json({
+        message:
+          "Password must be at least 8 characters and include a letter and a number.",
+      });
+    }
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match." });
+    }
+
+    try {
+      await ensureResetTable();
+      await pool.query(
+        "DELETE FROM password_reset_tokens WHERE expires_at < NOW()"
+      );
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const tokenResult = await pool.query(
+        `SELECT id, user_id
+         FROM password_reset_tokens
+         WHERE token_hash = $1 AND expires_at > NOW()`,
+        [tokenHash]
+      );
+      const tokenRow = tokenResult.rows[0];
+      if (!tokenRow) {
+        return res.status(400).json({ message: "Invalid or expired token." });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [
+        passwordHash,
+        tokenRow.user_id,
+      ]);
+      await pool.query("DELETE FROM password_reset_tokens WHERE id = $1", [
+        tokenRow.id,
+      ]);
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
   });
 
   app.post("/api/auth/signout", (req, res, next) => {

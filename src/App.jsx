@@ -5,6 +5,7 @@ import WatchPage from "./WatchPage.jsx";
 import SharedListPage from "./SharedListPage.jsx";
 import RoomPage from "./RoomPage.jsx";
 import RoomWatchPage from "./RoomWatchPage.jsx";
+import ResetPasswordPage from "./ResetPasswordPage.jsx";
 
 const parseHash = () => {
   const hash = window.location.hash || "";
@@ -45,6 +46,12 @@ const parseHash = () => {
       mediaType: type === "tv" ? "tv" : "movie",
     };
   }
+  if (hash.startsWith("#reset-password")) {
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    const params = new URLSearchParams(query);
+    const token = params.get("token") || "";
+    return { page: "reset-password", token };
+  }
   if (hash.startsWith("#list")) {
     const query = hash.includes("?") ? hash.split("?")[1] : "";
     const params = new URLSearchParams(query);
@@ -81,6 +88,10 @@ function App() {
     return (
       <RoomWatchPage code={route.code} />
     );
+  }
+
+  if (route.page === "reset-password") {
+    return <ResetPasswordPage token={route.token} />;
   }
 
   if (route.page === "list") {
