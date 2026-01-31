@@ -184,10 +184,19 @@ function SharedListPage({ code = "" }) {
                   className="flex items-center gap-4 text-slate-400"
                 >
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700">
-                      <span className="text-[10px] font-bold text-slate-300">
-                        {list?.owner?.username?.slice(0, 2).toUpperCase() || "?"}
-                      </span>
+                    <div className="w-14 h-14 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700 overflow-hidden">
+                      {list?.owner?.avatar ? (
+                        <img
+                          src={list.owner.avatar}
+                          alt={`${list?.owner?.username || "User"} avatar`}
+                          className="w-full h-full object-cover"
+                          loading="lazy"
+                        />
+                      ) : (
+                        <span className="text-[10px] font-bold text-slate-300">
+                          {list?.owner?.username?.slice(0, 2).toUpperCase() || "?"}
+                        </span>
+                      )}
                     </div>
                     <span className="text-xs">
                       Curated by <span className="text-slate-200 font-medium">{list?.owner?.username || "Unknown"}</span>

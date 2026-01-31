@@ -1056,7 +1056,7 @@ export const getAuthApp = () => {
     }
     try {
       const listResult = await pool.query(
-        `SELECT lists.id, lists.name, lists.share_code, users.username
+        `SELECT lists.id, lists.name, lists.share_code, users.username, users.avatar
          FROM lists
          JOIN users ON users.id = lists.user_id
          WHERE lists.share_code = $1`,
@@ -1085,7 +1085,10 @@ export const getAuthApp = () => {
           id: list.id,
           name: list.name,
           shareCode: list.share_code,
-          owner: { username: list.username || "User" },
+          owner: {
+            username: list.username || "User",
+            avatar: list.avatar || "",
+          },
         },
         items,
       });
