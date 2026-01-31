@@ -1261,16 +1261,46 @@ function AccountPage({ initialTab = "rooms" }) {
                                   </button>
                                 </div>
                               </form>
-                            ) : (
-                              <>
-                                <h3 className="text-lg font-semibold leading-snug break-words line-clamp-2 sm:line-clamp-none">
-                                  {activeList.name}
-                                </h3>
-                                <p className="text-xs text-slate-400 mt-1">
-                                  {activeList.movies?.length || 0} movies
-                                </p>
-                              </>
-                            )}
+                              ) : (
+                                <>
+                                  <h3 className="text-lg font-semibold leading-snug break-words line-clamp-2 sm:line-clamp-none">
+                                    {activeList.name}
+                                  </h3>
+                                  <p className="text-xs text-slate-400 mt-1">
+                                    {activeList.movies?.length || 0} movies
+                                  </p>
+                                  {Array.isArray(activeList.collaborators) &&
+                                    activeList.collaborators.length > 0 && (
+                                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                                        <div className="flex -space-x-2">
+                                          {activeList.collaborators.slice(0, 5).map((member) => (
+                                            <div
+                                              key={member.id}
+                                              className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900 overflow-hidden flex items-center justify-center text-[10px] font-semibold text-slate-200"
+                                              title={member.username}
+                                            >
+                                              {member.avatar ? (
+                                                <img
+                                                  src={member.avatar}
+                                                  alt={member.username}
+                                                  className="h-full w-full object-cover"
+                                                  loading="lazy"
+                                                />
+                                              ) : (
+                                                <span>
+                                                  {(member.username || "U").slice(0, 2).toUpperCase()}
+                                                </span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                        <span className="text-[11px] text-slate-400">
+                                          Collaborators
+                                        </span>
+                                      </div>
+                                    )}
+                                </>
+                              )}
                           </div>
                             <div className="flex flex-wrap items-center gap-2">
                               {!renameOpen && (

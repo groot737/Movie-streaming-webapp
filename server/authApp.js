@@ -839,8 +839,10 @@ export const getAuthApp = () => {
     try {
       await ensureListCollaboratorsTable();
       const listsResult = await pool.query(
-        `SELECT lists.id, lists.name, lists.share_code
+        `SELECT lists.id, lists.name, lists.share_code, lists.user_id,
+                users.username AS owner_username, users.avatar AS owner_avatar
          FROM lists
+         JOIN users ON users.id = lists.user_id
          LEFT JOIN list_collaborators lc
            ON lc.list_id = lists.id AND lc.user_id = $1
          WHERE lists.user_id = $1 OR lc.user_id = $1
@@ -852,6 +854,24 @@ export const getAuthApp = () => {
         return res.json({ lists: [] });
       }
       const listIds = lists.map((list) => list.id);
+      const collaboratorsResult = await pool.query(
+        `SELECT lc.list_id, users.id, users.username, users.avatar
+         FROM list_collaborators lc
+         JOIN users ON users.id = lc.user_id
+         WHERE lc.list_id = ANY($1)`,
+        [listIds]
+      );
+      const collaboratorsByList = new Map();
+      collaboratorsResult.rows.forEach((row) => {
+        if (!collaboratorsByList.has(row.list_id)) {
+          collaboratorsByList.set(row.list_id, []);
+        }
+        collaboratorsByList.get(row.list_id).push({
+          id: row.id,
+          username: row.username || "User",
+          avatar: row.avatar || "",
+        });
+      });
       const itemsResult = await pool.query(
         `SELECT list_id, tmdb_id, media_type, title, poster_path, release_date
          FROM list_items
@@ -872,12 +892,30 @@ export const getAuthApp = () => {
           release_date: row.release_date,
         });
       });
-      const payload = lists.map((list) => ({
-        id: list.id,
-        name: list.name,
-        shareCode: list.share_code || "",
-        movies: itemsByList.get(list.id) || [],
-      }));
+      const payload = lists.map((list) => {
+        const isOwner = list.user_id === req.user.id;
+        const owner = {
+          id: list.user_id,
+          username: list.owner_username || "User",
+          avatar: list.owner_avatar || "",
+        };
+        const collaborators = [
+          owner,
+          ...(collaboratorsByList.get(list.id) || []),
+        ].filter(
+          (member, index, arr) =>
+            arr.findIndex((entry) => entry.id === member.id) === index
+        );
+        return {
+          id: list.id,
+          name: list.name,
+          shareCode: list.share_code || "",
+          isOwner,
+          owner,
+          collaborators,
+          movies: itemsByList.get(list.id) || [],
+        };
+      });
       return res.json({ lists: payload });
     } catch (err) {
       return next(err);
