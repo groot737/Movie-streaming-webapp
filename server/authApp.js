@@ -1014,16 +1014,21 @@ export const getAuthApp = () => {
       return res.status(400).json({ message: "List name is required." });
     }
     try {
+      await ensureListCollaboratorsTable();
       const listResult = await pool.query(
-        "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+        `SELECT lists.id
+         FROM lists
+         LEFT JOIN list_collaborators lc
+           ON lc.list_id = lists.id AND lc.user_id = $2
+         WHERE lists.id = $1 AND (lists.user_id = $2 OR lc.user_id = $2)`,
         [listId, req.user.id]
       );
       if (!listResult.rows.length) {
         return res.status(404).json({ message: "List not found." });
       }
       const result = await pool.query(
-        "UPDATE lists SET name = $1 WHERE id = $2 AND user_id = $3 RETURNING id, name",
-        [name, listId, req.user.id]
+        "UPDATE lists SET name = $1 WHERE id = $2 RETURNING id, name",
+        [name, listId]
       );
       return res.json({ list: result.rows[0] });
     } catch (err) {
@@ -1170,19 +1175,31 @@ export const getAuthApp = () => {
       return res.status(400).json({ message: "Invalid list id." });
     }
     try {
+      await ensureListCollaboratorsTable();
       const listResult = await pool.query(
-        "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
-        [listId, req.user.id]
+        "SELECT id, user_id FROM lists WHERE id = $1",
+        [listId]
       );
-      if (!listResult.rows.length) {
+      const list = listResult.rows[0];
+      if (!list) {
         return res.status(404).json({ message: "List not found." });
       }
-      await pool.query("DELETE FROM list_items WHERE list_id = $1", [listId]);
-      await pool.query("DELETE FROM lists WHERE id = $1 AND user_id = $2", [
-        listId,
-        req.user.id,
-      ]);
-      return res.json({ ok: true });
+      if (list.user_id === req.user.id) {
+        await pool.query("DELETE FROM list_items WHERE list_id = $1", [listId]);
+        await pool.query("DELETE FROM lists WHERE id = $1 AND user_id = $2", [
+          listId,
+          req.user.id,
+        ]);
+        return res.json({ ok: true, deleted: "owner" });
+      }
+      const collabResult = await pool.query(
+        "DELETE FROM list_collaborators WHERE list_id = $1 AND user_id = $2 RETURNING list_id",
+        [listId, req.user.id]
+      );
+      if (!collabResult.rows.length) {
+        return res.status(404).json({ message: "List not found." });
+      }
+      return res.json({ ok: true, deleted: "collaborator" });
     } catch (err) {
       return next(err);
     }

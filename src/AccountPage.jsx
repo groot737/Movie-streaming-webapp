@@ -96,6 +96,12 @@ function AccountPage({ initialTab = "rooms" }) {
   const [inviteLink, setInviteLink] = useState("");
   const [inviteMessage, setInviteMessage] = useState("");
   const [inviteError, setInviteError] = useState("");
+  const [actionModal, setActionModal] = useState({
+    open: false,
+    title: "",
+    message: "",
+    loading: false,
+  });
   const [activeListId, setActiveListId] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -238,6 +244,7 @@ function AccountPage({ initialTab = "rooms" }) {
     setShareMessage("");
     setInviteMessage("");
     setInviteError("");
+    setActionModal({ open: false, title: "", message: "", loading: false });
   }, [activeListId]);
 
   useEffect(() => {
@@ -291,6 +298,15 @@ function AccountPage({ initialTab = "rooms" }) {
     }
     const match = storedLists.find((list) => list.id === preferredId);
     setActiveListId(match ? match.id : storedLists[0].id);
+  };
+
+  const openActionModal = (title, message, loading = false, autoClose = false) => {
+    setActionModal({ open: true, title, message, loading });
+    if (autoClose) {
+      setTimeout(() => {
+        setActionModal((prev) => ({ ...prev, open: false, loading: false }));
+      }, 1800);
+    }
   };
 
   const handleProfileSubmit = (event) => {
@@ -411,46 +427,63 @@ function AccountPage({ initialTab = "rooms" }) {
 
   const handleDeleteList = async (listId) => {
     if (!listId) return;
+    if (activeList && !activeList.isOwner) {
+      openActionModal(
+        "Delete not allowed",
+        "Only the list owner can delete this list.",
+        false,
+        true
+      );
+      return;
+    }
     const confirmed = window.confirm(
       "Delete this list and all its movies? This cannot be undone."
     );
     if (!confirmed) return;
+    openActionModal("Deleting list", "Removing this list...", true);
     setListError("");
     setListMessage("");
     setShareMessage("");
     const result = await deleteList(listId);
     if (result?.error) {
       setListError(result.error);
+      openActionModal("Delete failed", result.error, false);
       return;
     }
     const refresh = await getLists();
     if (refresh?.error) {
       setListError(refresh.error);
+      openActionModal("Delete failed", refresh.error, false);
       return;
     }
     syncLists(refresh.lists || [], "");
-    setListMessage("List deleted.");
+    setListMessage("");
+    openActionModal("List deleted", "The list was deleted successfully.", false, true);
   };
 
   const handleRenameList = async (event) => {
     event.preventDefault();
     if (!activeList) return;
+    openActionModal("Renaming list", "Updating list name...", true);
     setListError("");
     setListMessage("");
     setShareMessage("");
     const result = await updateListName(activeList.id, renameValue);
     if (result?.error) {
       setListError(result.error);
+      openActionModal("Rename failed", result.error, false);
       return;
     }
     const refresh = await getLists();
     if (refresh?.error) {
       setListError(refresh.error);
+      openActionModal("Rename failed", refresh.error, false);
       return;
     }
     syncLists(refresh.lists || [], activeList.id);
     setRenameOpen(false);
-    setListMessage("List renamed.");
+    setListMessage("");
+    openActionModal("List renamed", "Your list name was updated.", false, true);
   };
 
   const handleRemoveMovie = async (listId, tmdbId) => {
@@ -885,11 +918,13 @@ function AccountPage({ initialTab = "rooms" }) {
     if (!activeList?.shareCode) {
       setListError("Share code unavailable.");
       setShareMessage("");
+      openActionModal("Share failed", "Share code unavailable.", false);
       return;
     }
     const base = `${window.location.origin}${window.location.pathname}`;
     const shareLink = `${base}#list?code=${activeList.shareCode}`;
     try {
+      openActionModal("Sharing list", "Generating share link...", true);
       if (navigator?.clipboard?.writeText) {
         await navigator.clipboard.writeText(shareLink);
       } else {
@@ -903,11 +938,13 @@ function AccountPage({ initialTab = "rooms" }) {
         document.execCommand("copy");
         document.body.removeChild(textarea);
       }
-      setShareMessage("Share link copied.");
+      setShareMessage("");
       setListError("");
+      openActionModal("Share link copied", "You can now send the link to others.", false, true);
     } catch (err) {
       setListError("Unable to copy share link.");
       setShareMessage("");
+      openActionModal("Share failed", "Unable to copy share link.", false);
     }
   };
 
@@ -1185,7 +1222,7 @@ function AccountPage({ initialTab = "rooms" }) {
                 {listError && (
                   <div className="mt-3 text-xs text-rose-300">{listError}</div>
                 )}
-                {listMessage && (
+                {false && listMessage && (
                   <div className="mt-3 text-xs text-emerald-300">
                     {listMessage}
                   </div>
@@ -1335,20 +1372,20 @@ function AccountPage({ initialTab = "rooms" }) {
                                 Rename
                               </button>
                             )}
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteList(activeList.id)}
-                              className="px-3 py-1.5 rounded-lg border border-rose-500/50 text-xs text-rose-100 hover:bg-rose-500/10 transition"
-                            >
-                              Delete list
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteList(activeList.id)}
+                                className="px-3 py-1.5 rounded-lg border border-rose-500/50 text-xs text-rose-100 hover:bg-rose-500/10 transition"
+                              >
+                                {activeList.isOwner ? "Delete list" : "Remove from my lists"}
+                              </button>
                           </div>
                         </div>
-                        {shareMessage && (
-                          <div className="mt-2 text-xs text-emerald-300">
-                            {shareMessage}
-                          </div>
-                        )}
+                          {false && shareMessage && (
+                            <div className="mt-2 text-xs text-emerald-300">
+                              {shareMessage}
+                            </div>
+                          )}
                         <div className="mt-4">
                           <button
                             type="button"
@@ -1946,6 +1983,47 @@ function AccountPage({ initialTab = "rooms" }) {
                 <div className="text-xs text-rose-300">{importError}</div>
               )}
             </form>
+            </div>
+          </div>
+        )}
+
+        {actionModal.open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <div
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+              onClick={() => {
+                if (!actionModal.loading) {
+                  setActionModal((prev) => ({ ...prev, open: false }));
+                }
+              }}
+              role="presentation"
+            />
+            <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold">{actionModal.title}</h3>
+                  <p className="text-sm text-slate-400 mt-1">
+                    {actionModal.message}
+                  </p>
+                </div>
+                {!actionModal.loading && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setActionModal((prev) => ({ ...prev, open: false }))
+                    }
+                    className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+                  >
+                    Close
+                  </button>
+                )}
+              </div>
+              {actionModal.loading && (
+                <div className="mt-5 flex items-center gap-3 text-xs text-slate-400">
+                  <span className="h-4 w-4 rounded-full border-2 border-cyan-500/30 border-t-cyan-400 animate-spin" />
+                  Processing...
+                </div>
+              )}
             </div>
           </div>
         )}
