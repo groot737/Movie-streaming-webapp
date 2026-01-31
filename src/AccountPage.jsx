@@ -92,6 +92,10 @@ function AccountPage({ initialTab = "rooms" }) {
   const [listError, setListError] = useState("");
   const [listMessage, setListMessage] = useState("");
   const [shareMessage, setShareMessage] = useState("");
+  const [inviteModalOpen, setInviteModalOpen] = useState(false);
+  const [inviteLink, setInviteLink] = useState("");
+  const [inviteMessage, setInviteMessage] = useState("");
+  const [inviteError, setInviteError] = useState("");
   const [activeListId, setActiveListId] = useState("");
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -154,20 +158,30 @@ function AccountPage({ initialTab = "rooms" }) {
   useEffect(() => {
     if (activeTab !== "lists") return;
     let active = true;
-    const loadLists = async () => {
+    let pollId;
+    const loadLists = async (silent = false) => {
       const result = await getLists();
       if (!active) return;
       if (result?.error) {
-        setListError(result.error);
+        if (!silent) {
+          setListError(result.error);
+        }
         setLists([]);
         return;
       }
       const storedLists = result.lists || [];
       syncLists(storedLists);
+      if (!silent) {
+        setListError("");
+      }
     };
     loadLists();
+    pollId = setInterval(() => {
+      loadLists(true);
+    }, 5000);
     return () => {
       active = false;
+      clearInterval(pollId);
     };
   }, [activeTab]);
 
@@ -222,6 +236,8 @@ function AccountPage({ initialTab = "rooms" }) {
     setSearchError("");
     setAddedSearchIds({});
     setShareMessage("");
+    setInviteMessage("");
+    setInviteError("");
   }, [activeListId]);
 
   useEffect(() => {
@@ -895,6 +911,59 @@ function AccountPage({ initialTab = "rooms" }) {
     }
   };
 
+  const buildInviteLink = () => {
+    if (!activeList?.shareCode) return "";
+    const base = `${window.location.origin}${window.location.pathname}`;
+    return `${base}#invite?code=${activeList.shareCode}`;
+  };
+
+  const handleOpenInviteModal = () => {
+    const link = buildInviteLink();
+    if (!link) {
+      setInviteError("Invite link unavailable.");
+      setInviteMessage("");
+      return;
+    }
+    setInviteLink(link);
+    setInviteError("");
+    setInviteMessage("");
+    setInviteModalOpen(true);
+  };
+
+  const handleCloseInviteModal = () => {
+    setInviteModalOpen(false);
+    setInviteMessage("");
+    setInviteError("");
+  };
+
+  const handleCopyInviteLink = async () => {
+    if (!inviteLink) {
+      setInviteError("Invite link unavailable.");
+      setInviteMessage("");
+      return;
+    }
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(inviteLink);
+      } else {
+        const textarea = document.createElement("textarea");
+        textarea.value = inviteLink;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textarea);
+      }
+      setInviteMessage("Invite link copied.");
+      setInviteError("");
+    } catch (err) {
+      setInviteError("Unable to copy invite link.");
+      setInviteMessage("");
+    }
+  };
+
   const handleAiBack = () => {
     setAiResults([]);
     setAiTitle("");
@@ -1203,22 +1272,32 @@ function AccountPage({ initialTab = "rooms" }) {
                               </>
                             )}
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            {!renameOpen && (
-                              <button
-                                type="button"
-                                onClick={handleShareList}
-                                disabled={!activeList.shareCode}
-                                className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition disabled:cursor-not-allowed disabled:opacity-50"
-                              >
-                                Share
-                              </button>
-                            )}
-                            {!renameOpen && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRenameOpen(true);
+                            <div className="flex flex-wrap items-center gap-2">
+                              {!renameOpen && (
+                                <button
+                                  type="button"
+                                  onClick={handleShareList}
+                                  disabled={!activeList.shareCode}
+                                  className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Share
+                                </button>
+                              )}
+                              {!renameOpen && (
+                                <button
+                                  type="button"
+                                  onClick={handleOpenInviteModal}
+                                  disabled={!activeList.shareCode}
+                                  className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  Invite
+                                </button>
+                              )}
+                              {!renameOpen && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setRenameOpen(true);
                                   setRenameValue(activeList.name);
                                 }}
                                 className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition"
@@ -1753,11 +1832,11 @@ function AccountPage({ initialTab = "rooms" }) {
         </div>
       )}
 
-      {importModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <div
-            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
-            onClick={handleCloseImportModal}
+        {importModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <div
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+              onClick={handleCloseImportModal}
             role="presentation"
           />
           <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
@@ -1837,13 +1916,63 @@ function AccountPage({ initialTab = "rooms" }) {
                 <div className="text-xs text-rose-300">{importError}</div>
               )}
             </form>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {searchModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-          <div
+        {inviteModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <div
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+              onClick={handleCloseInviteModal}
+              role="presentation"
+            />
+            <div className="relative w-full max-w-lg rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold">Invite collaborators</h3>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Share this link so friends can edit the list with you.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleCloseInviteModal}
+                  className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="mt-4 space-y-3">
+                <input
+                  type="text"
+                  readOnly
+                  value={inviteLink}
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-xs text-slate-200 focus:outline-none"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyInviteLink}
+                    className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 text-sm font-medium hover:bg-cyan-400 transition"
+                  >
+                    Copy invite link
+                  </button>
+                </div>
+                {inviteMessage && (
+                  <div className="text-xs text-emerald-300">{inviteMessage}</div>
+                )}
+                {inviteError && (
+                  <div className="text-xs text-rose-300">{inviteError}</div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {searchModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <div
             className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
             onClick={handleCloseSearchModal}
             role="presentation"

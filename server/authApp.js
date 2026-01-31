@@ -14,6 +14,7 @@ import { pool } from "./db.js";
 
 let cachedApp;
 let resetTableReady = false;
+let listCollaboratorsReady = false;
 
 const ensureResetTable = async () => {
   if (resetTableReady) {
@@ -32,6 +33,24 @@ const ensureResetTable = async () => {
     "CREATE INDEX IF NOT EXISTS password_reset_tokens_token_hash_idx ON password_reset_tokens (token_hash);"
   );
   resetTableReady = true;
+};
+
+const ensureListCollaboratorsTable = async () => {
+  if (listCollaboratorsReady) {
+    return;
+  }
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS list_collaborators (
+      list_id INTEGER NOT NULL REFERENCES lists(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (list_id, user_id)
+    );`
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS list_collaborators_user_id_idx ON list_collaborators (user_id);"
+  );
+  listCollaboratorsReady = true;
 };
 
 const configurePassport = () => {
@@ -818,8 +837,14 @@ export const getAuthApp = () => {
 
   app.get("/api/lists", requireAuth, async (req, res, next) => {
     try {
+      await ensureListCollaboratorsTable();
       const listsResult = await pool.query(
-        "SELECT id, name, share_code FROM lists WHERE user_id = $1 ORDER BY created_at DESC",
+        `SELECT lists.id, lists.name, lists.share_code
+         FROM lists
+         LEFT JOIN list_collaborators lc
+           ON lc.list_id = lists.id AND lc.user_id = $1
+         WHERE lists.user_id = $1 OR lc.user_id = $1
+         ORDER BY lists.created_at DESC`,
         [req.user.id]
       );
       const lists = listsResult.rows;
@@ -982,8 +1007,13 @@ export const getAuthApp = () => {
       return res.status(400).json({ message: "Invalid movie id." });
     }
     try {
+      await ensureListCollaboratorsTable();
       const listResult = await pool.query(
-        "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+        `SELECT lists.id
+         FROM lists
+         LEFT JOIN list_collaborators lc
+           ON lc.list_id = lists.id AND lc.user_id = $2
+         WHERE lists.id = $1 AND (lists.user_id = $2 OR lc.user_id = $2)`,
         [listId, req.user.id]
       );
       if (!listResult.rows.length) {
@@ -1020,8 +1050,13 @@ export const getAuthApp = () => {
         return res.status(400).json({ message: "Invalid list or movie id." });
       }
       try {
+        await ensureListCollaboratorsTable();
         const listResult = await pool.query(
-          "SELECT id FROM lists WHERE id = $1 AND user_id = $2",
+          `SELECT lists.id
+           FROM lists
+           LEFT JOIN list_collaborators lc
+             ON lc.list_id = lists.id AND lc.user_id = $2
+           WHERE lists.id = $1 AND (lists.user_id = $2 OR lc.user_id = $2)`,
           [listId, req.user.id]
         );
         if (!listResult.rows.length) {
@@ -1158,6 +1193,36 @@ export const getAuthApp = () => {
         },
         items,
       });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/lists/invite/accept", requireAuth, async (req, res, next) => {
+    const shareCode = (req.body?.shareCode || "").trim().toUpperCase();
+    if (!shareCode || shareCode.length !== SHARE_CODE_LENGTH) {
+      return res.status(400).json({ message: "Invalid share code." });
+    }
+    try {
+      await ensureListCollaboratorsTable();
+      const listResult = await pool.query(
+        "SELECT id, user_id FROM lists WHERE share_code = $1",
+        [shareCode]
+      );
+      const list = listResult.rows[0];
+      if (!list) {
+        return res.status(404).json({ message: "Shared list not found." });
+      }
+      if (list.user_id === req.user.id) {
+        return res.json({ ok: true, listId: list.id, already: true });
+      }
+      await pool.query(
+        `INSERT INTO list_collaborators (list_id, user_id)
+         VALUES ($1, $2)
+         ON CONFLICT DO NOTHING`,
+        [list.id, req.user.id]
+      );
+      return res.json({ ok: true, listId: list.id });
     } catch (err) {
       return next(err);
     }

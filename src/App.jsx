@@ -3,6 +3,7 @@ import BrowsePage from "./BrowsePage.jsx";
 import AccountPage from "./AccountPage.jsx";
 import WatchPage from "./WatchPage.jsx";
 import SharedListPage from "./SharedListPage.jsx";
+import InviteListPage from "./InviteListPage.jsx";
 import RoomPage from "./RoomPage.jsx";
 import RoomWatchPage from "./RoomWatchPage.jsx";
 import ResetPasswordPage from "./ResetPasswordPage.jsx";
@@ -58,6 +59,12 @@ const parseHash = () => {
     const code = params.get("code") || "";
     return { page: "list", code };
   }
+  if (hash.startsWith("#invite")) {
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    const params = new URLSearchParams(query);
+    const code = params.get("code") || "";
+    return { page: "invite", code };
+  }
   return { page: "browse" };
 };
 
@@ -96,6 +103,9 @@ function App() {
 
   if (route.page === "list") {
     return <SharedListPage code={route.code} />;
+  }
+  if (route.page === "invite") {
+    return <InviteListPage code={route.code} />;
   }
 
   return <BrowsePage />;
