@@ -3,11 +3,13 @@ import crypto from "crypto";
 import cors from "cors";
 import express from "express";
 import session from "express-session";
+import multer from "multer";
 import nodemailer from "nodemailer";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 import connectPgSimple from "connect-pg-simple";
 import OpenAI from "openai";
+import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { pool } from "./db.js";
 
 let cachedApp;
@@ -44,7 +46,7 @@ const configurePassport = () => {
         try {
           const normalizedEmail = email.trim().toLowerCase();
           const result = await pool.query(
-            "SELECT id, email, username, password_hash FROM users WHERE email = $1",
+            "SELECT id, email, username, avatar, password_hash FROM users WHERE email = $1",
             [normalizedEmail]
           );
           const user = result.rows[0];
@@ -59,6 +61,7 @@ const configurePassport = () => {
             id: user.id,
             email: user.email,
             username: user.username,
+            avatar: user.avatar || "",
           });
         } catch (err) {
           return done(err);
@@ -74,14 +77,17 @@ const configurePassport = () => {
   passport.deserializeUser(async (id, done) => {
     try {
       const result = await pool.query(
-        "SELECT id, email, username FROM users WHERE id = $1",
+        "SELECT id, email, username, avatar FROM users WHERE id = $1",
         [id]
       );
       const user = result.rows[0];
       if (!user) {
         return done(null, false);
       }
-      return done(null, user);
+      return done(null, {
+        ...user,
+        avatar: user.avatar || "",
+      });
     } catch (err) {
       return done(err);
     }
@@ -225,6 +231,13 @@ export const getAuthApp = () => {
   const smtpUser = process.env.SMTP_USER || "";
   const smtpPass = process.env.SMTP_PASS || "";
   const smtpFrom = process.env.SMTP_FROM || smtpUser;
+  const b2KeyId = process.env.B2_KEY_ID || "";
+  const b2Key = process.env.B2_APPLICATION_KEY || "";
+  const b2Bucket = process.env.B2_BUCKET_NAME || "";
+  const b2Endpoint = process.env.B2_ENDPOINT || "";
+  const b2Region = process.env.B2_REGION || "us-west-004";
+  const b2Public = (process.env.B2_PUBLIC || "true").toLowerCase() === "true";
+  const b2AvatarPrefix = process.env.B2_AVATAR_PREFIX || "avatars";
 
   const mailer =
     smtpHost && smtpUser && smtpPass
@@ -318,6 +331,20 @@ export const getAuthApp = () => {
   app.use(passport.initialize());
   app.use(passport.session());
 
+  const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 2 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (
+        ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype || "")
+      ) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error("Unsupported file type."));
+    },
+  });
+
   app.post("/api/auth/signup", async (req, res, next) => {
     const { email, password, confirmPassword, username } = req.body || {};
     const normalizedEmail = (email || "").trim().toLowerCase();
@@ -371,7 +398,7 @@ export const getAuthApp = () => {
 
       const passwordHash = await bcrypt.hash(password, 12);
       const result = await pool.query(
-        "INSERT INTO users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username",
+        "INSERT INTO users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username, avatar",
         [normalizedEmail, passwordHash, normalizedUsername]
       );
       const user = result.rows[0];
@@ -567,7 +594,7 @@ export const getAuthApp = () => {
         return res.status(409).json({ message: "Username is already taken." });
       }
       const result = await pool.query(
-        "UPDATE users SET username = $1 WHERE id = $2 RETURNING id, email, username",
+        "UPDATE users SET username = $1 WHERE id = $2 RETURNING id, email, username, avatar",
         [normalizedUsername, req.user.id]
       );
       return res.json({ user: result.rows[0] });
@@ -575,6 +602,56 @@ export const getAuthApp = () => {
       return next(err);
     }
   });
+
+  app.post(
+    "/api/account/avatar",
+    requireAuth,
+    upload.single("avatar"),
+    async (req, res, next) => {
+      if (!b2KeyId || !b2Key || !b2Bucket || !b2Endpoint) {
+        return res.status(500).json({ message: "Missing B2 configuration." });
+      }
+      if (!req.file) {
+        return res.status(400).json({ message: "Avatar file is required." });
+      }
+      const ext =
+        req.file.mimetype === "image/png"
+          ? "png"
+          : req.file.mimetype === "image/webp"
+            ? "webp"
+            : "jpg";
+      const safePrefix = b2AvatarPrefix.replace(/\/+$/, "");
+      const prefixPart = safePrefix ? `${safePrefix}/` : "";
+      const objectKey = `${prefixPart}user-${req.user.id}-${Date.now()}.${ext}`;
+      const s3 = new S3Client({
+        region: b2Region,
+        endpoint: `https://${b2Endpoint}`,
+        credentials: {
+          accessKeyId: b2KeyId,
+          secretAccessKey: b2Key,
+        },
+      });
+      try {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: b2Bucket,
+            Key: objectKey,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype,
+            ACL: b2Public ? "public-read" : undefined,
+          })
+        );
+        const publicUrl = `https://${b2Endpoint}/${b2Bucket}/${objectKey}`;
+        const result = await pool.query(
+          "UPDATE users SET avatar = $1 WHERE id = $2 RETURNING id, email, username, avatar",
+          [publicUrl, req.user.id]
+        );
+        return res.json({ user: result.rows[0] });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
 
   app.patch("/api/account/password", requireAuth, async (req, res, next) => {
     const currentPassword = req.body?.currentPassword || "";
@@ -895,6 +972,59 @@ export const getAuthApp = () => {
     }
   );
 
+  app.delete("/api/account/avatar", requireAuth, async (req, res, next) => {
+    if (!b2KeyId || !b2Key || !b2Bucket || !b2Endpoint) {
+      return res.status(500).json({ message: "Missing B2 configuration." });
+    }
+    try {
+      const current = await pool.query(
+        "SELECT avatar FROM users WHERE id = $1",
+        [req.user.id]
+      );
+      const avatarUrl = current.rows?.[0]?.avatar || "";
+      if (!avatarUrl) {
+        const cleared = await pool.query(
+          "UPDATE users SET avatar = NULL WHERE id = $1 RETURNING id, email, username, avatar",
+          [req.user.id]
+        );
+        return res.json({ user: cleared.rows[0] });
+      }
+      let objectKey = "";
+      try {
+        const url = new URL(avatarUrl);
+        const rawPath = url.pathname.replace(/^\/+/, "");
+        objectKey = rawPath.startsWith(`${b2Bucket}/`)
+          ? rawPath.slice(b2Bucket.length + 1)
+          : rawPath;
+      } catch (err) {
+        objectKey = "";
+      }
+      const s3 = new S3Client({
+        region: b2Region,
+        endpoint: `https://${b2Endpoint}`,
+        credentials: {
+          accessKeyId: b2KeyId,
+          secretAccessKey: b2Key,
+        },
+      });
+      if (objectKey) {
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: b2Bucket,
+            Key: objectKey,
+          })
+        );
+      }
+      const result = await pool.query(
+        "UPDATE users SET avatar = NULL WHERE id = $1 RETURNING id, email, username, avatar",
+        [req.user.id]
+      );
+      return res.json({ user: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   app.delete("/api/lists/:listId", requireAuth, async (req, res, next) => {
     const listId = Number(req.params.listId);
     if (!Number.isFinite(listId)) {
@@ -1151,8 +1281,14 @@ export const getAuthApp = () => {
   });
 
   app.use((err, req, res, next) => {
+    if (err instanceof multer.MulterError) {
+      return res.status(400).json({ message: err.message });
+    }
+    if (err?.message === "Unsupported file type.") {
+      return res.status(400).json({ message: err.message });
+    }
     console.error(err);
-    res.status(500).json({ message: "Server error." });
+    return res.status(500).json({ message: "Server error." });
   });
 
   cachedApp = app;

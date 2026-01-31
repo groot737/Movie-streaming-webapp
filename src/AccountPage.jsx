@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import Cropper from "react-easy-crop";
 import { AnimatePresence } from "framer-motion";
 import { MovieModal } from "./BrowsePage.jsx";
 import {
@@ -36,6 +37,42 @@ const tmdbClient = {
   getSeriesDetails: async (seriesId, signal) => {
     return fetchApiJson(`/api/tmdb/details/tv/${seriesId}`, signal);
   },
+};
+
+const createImage = (url) =>
+  new Promise((resolve, reject) => {
+    const image = new Image();
+    image.addEventListener("load", () => resolve(image));
+    image.addEventListener("error", (err) => reject(err));
+    image.setAttribute("crossOrigin", "anonymous");
+    image.src = url;
+  });
+
+const getCroppedImage = async (imageSrc, pixelCrop, fileType) => {
+  const image = await createImage(imageSrc);
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return null;
+  ctx.drawImage(
+    image,
+    pixelCrop.x,
+    pixelCrop.y,
+    pixelCrop.width,
+    pixelCrop.height,
+    0,
+    0,
+    pixelCrop.width,
+    pixelCrop.height
+  );
+  return new Promise((resolve) => {
+    canvas.toBlob(
+      (blob) => resolve(blob),
+      fileType || "image/jpeg",
+      0.92
+    );
+  });
 };
 
 function AccountPage({ initialTab = "rooms" }) {
@@ -78,6 +115,21 @@ function AccountPage({ initialTab = "rooms" }) {
   const [passwordMessage, setPasswordMessage] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [username, setUsername] = useState("");
+  const [avatarPreview, setAvatarPreview] = useState("");
+  const [avatarName, setAvatarName] = useState("");
+  const [avatarError, setAvatarError] = useState("");
+  const [avatarMessage, setAvatarMessage] = useState("");
+  const [avatarUrl, setAvatarUrl] = useState("");
+  const [avatarSource, setAvatarSource] = useState("");
+  const [avatarPendingName, setAvatarPendingName] = useState("");
+  const [avatarFileType, setAvatarFileType] = useState("");
+  const [avatarCrop, setAvatarCrop] = useState({ x: 0, y: 0 });
+  const [avatarZoom, setAvatarZoom] = useState(1);
+  const [avatarCroppedArea, setAvatarCroppedArea] = useState(null);
+  const [avatarModalOpen, setAvatarModalOpen] = useState(false);
+  const [avatarSaving, setAvatarSaving] = useState(false);
+  const [avatarRemoving, setAvatarRemoving] = useState(false);
+  const avatarInputRef = useRef(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -178,6 +230,9 @@ function AccountPage({ initialTab = "rooms" }) {
         if (data?.user?.username) {
           setUsername(data.user.username);
         }
+        if (typeof data?.user?.avatar === "string") {
+          setAvatarUrl(data.user.avatar);
+        }
       } catch (err) {
         // Ignore profile load errors.
       }
@@ -187,6 +242,22 @@ function AccountPage({ initialTab = "rooms" }) {
       active = false;
     };
   }, [activeTab]);
+
+  useEffect(() => {
+    return () => {
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+    };
+  }, [avatarPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (avatarSource) {
+        URL.revokeObjectURL(avatarSource);
+      }
+    };
+  }, [avatarSource]);
 
   const syncLists = (storedLists, preferredId = activeListId) => {
     setLists(storedLists);
@@ -424,6 +495,159 @@ function AccountPage({ initialTab = "rooms" }) {
       setRoomsMessage("Room deleted.");
     } catch (err) {
       setRoomsError("Network error. Please try again.");
+    }
+  };
+
+  const handleAvatarChange = (event) => {
+    const file = event.target.files?.[0];
+    setAvatarError("");
+    setAvatarMessage("");
+    if (!file) {
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setAvatarError("Please choose a PNG, JPG, or WebP image.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setAvatarError("Avatar must be 2MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+    if (avatarSource) {
+      URL.revokeObjectURL(avatarSource);
+    }
+    setAvatarSource(URL.createObjectURL(file));
+    setAvatarPendingName(file.name);
+    setAvatarFileType(file.type);
+    setAvatarCrop({ x: 0, y: 0 });
+    setAvatarZoom(1);
+    setAvatarCroppedArea(null);
+    setAvatarModalOpen(true);
+  };
+
+  const handleAvatarClear = () => {
+    if (avatarPreview) {
+      URL.revokeObjectURL(avatarPreview);
+    }
+    setAvatarPreview("");
+    setAvatarName("");
+    setAvatarError("");
+    setAvatarMessage("");
+    if (avatarInputRef.current) {
+      avatarInputRef.current.value = "";
+    }
+  };
+
+  const handleAvatarRemove = async () => {
+    if (avatarRemoving) return;
+    setAvatarError("");
+    setAvatarMessage("");
+    if (!avatarUrl) {
+      handleAvatarClear();
+      return;
+    }
+    setAvatarRemoving(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/account/avatar`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAvatarError(data?.message || "Unable to remove avatar.");
+        setAvatarRemoving(false);
+        return;
+      }
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+      setAvatarPreview("");
+      setAvatarUrl("");
+      setAvatarName("");
+      setAvatarMessage("Avatar removed.");
+      if (avatarInputRef.current) {
+        avatarInputRef.current.value = "";
+      }
+      setAvatarRemoving(false);
+    } catch (err) {
+      setAvatarError("Network error. Please try again.");
+      setAvatarRemoving(false);
+    }
+  };
+
+  const handleAvatarCancel = () => {
+    if (avatarSource) {
+      URL.revokeObjectURL(avatarSource);
+    }
+    setAvatarSource("");
+    setAvatarPendingName("");
+    setAvatarFileType("");
+    setAvatarCrop({ x: 0, y: 0 });
+    setAvatarZoom(1);
+    setAvatarCroppedArea(null);
+    setAvatarSaving(false);
+    setAvatarModalOpen(false);
+    if (avatarInputRef.current) {
+      avatarInputRef.current.value = "";
+    }
+  };
+
+  const handleAvatarSave = async () => {
+    if (!avatarSource || !avatarCroppedArea) {
+      setAvatarError("Adjust the crop area before saving.");
+      return;
+    }
+    setAvatarError("");
+    setAvatarMessage("");
+    setAvatarSaving(true);
+    const croppedBlob = await getCroppedImage(
+      avatarSource,
+      avatarCroppedArea,
+      avatarFileType
+    );
+    if (!croppedBlob) {
+      setAvatarError("Unable to crop image. Please try again.");
+      setAvatarSaving(false);
+      return;
+    }
+    const uploadName = avatarPendingName || "avatar.jpg";
+    const formData = new FormData();
+    formData.append("avatar", croppedBlob, uploadName);
+    if (avatarPreview) {
+      URL.revokeObjectURL(avatarPreview);
+    }
+    setAvatarPreview(URL.createObjectURL(croppedBlob));
+    setAvatarName(avatarPendingName);
+    try {
+      const response = await fetch(`${API_BASE}/api/account/avatar`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setAvatarError(data?.message || "Unable to upload avatar.");
+        setAvatarSaving(false);
+        return;
+      }
+      setAvatarUrl(data?.user?.avatar || "");
+      setAvatarMessage("Avatar updated.");
+      setAvatarModalOpen(false);
+      setAvatarPendingName("");
+      setAvatarSaving(false);
+      if (avatarSource) {
+        URL.revokeObjectURL(avatarSource);
+      }
+      setAvatarSource("");
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+      setAvatarPreview("");
+    } catch (err) {
+      setAvatarError("Network error. Please try again.");
+      setAvatarSaving(false);
     }
   };
 
@@ -1054,6 +1278,78 @@ function AccountPage({ initialTab = "rooms" }) {
             <div className="space-y-6">
               <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
                 <div>
+                  <h2 className="text-xl font-semibold">Avatar</h2>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Upload a profile photo to personalize your account.
+                  </p>
+                </div>
+                <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center">
+                  <div className="h-20 w-20 rounded-full border border-slate-800 bg-slate-900/80 overflow-hidden flex items-center justify-center text-2xl text-slate-200">
+                    {avatarPreview || avatarUrl ? (
+                      <img
+                        src={avatarPreview || avatarUrl}
+                        alt="Avatar preview"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <span>
+                        {username.trim()
+                          ? username.trim().charAt(0).toUpperCase()
+                          : "?"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <input
+                      ref={avatarInputRef}
+                      id="account-avatar"
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      onChange={handleAvatarChange}
+                      className="hidden"
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label
+                        htmlFor="account-avatar"
+                        className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition cursor-pointer"
+                      >
+                        Upload avatar
+                      </label>
+                      {(avatarPreview || avatarUrl) && (
+                        <button
+                          type="button"
+                          onClick={handleAvatarRemove}
+                          disabled={avatarRemoving}
+                          className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                        >
+                          {avatarRemoving ? "Removing..." : "Remove"}
+                        </button>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-slate-400">
+                      PNG, JPG, or WebP. Max size 2MB.
+                    </p>
+                    {avatarPendingName && (
+                      <div className="mt-2 text-xs text-slate-300">
+                        Selected: {avatarPendingName}
+                      </div>
+                    )}
+                    {avatarError && (
+                      <div className="mt-2 text-xs text-rose-300">
+                        {avatarError}
+                      </div>
+                    )}
+                    {avatarMessage && (
+                      <div className="mt-2 text-xs text-emerald-300">
+                        {avatarMessage}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                <div>
                   <h2 className="text-xl font-semibold">Profile</h2>
                   <p className="text-sm text-slate-400 mt-1">
                     Update the username tied to your account.
@@ -1207,6 +1503,85 @@ function AccountPage({ initialTab = "rooms" }) {
           />
         )}
       </AnimatePresence>
+
+      {avatarModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={handleAvatarCancel}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Adjust avatar</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Zoom and drag to get the perfect crop.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleAvatarCancel}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-5">
+              <div className="relative h-72 w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+                <Cropper
+                  image={avatarSource}
+                  crop={avatarCrop}
+                  zoom={avatarZoom}
+                  aspect={1}
+                  cropShape="round"
+                  onCropChange={setAvatarCrop}
+                  onZoomChange={setAvatarZoom}
+                  onCropComplete={(_, pixels) => setAvatarCroppedArea(pixels)}
+                />
+              </div>
+              <div className="mt-5 space-y-2">
+                <label className="text-xs text-slate-400" htmlFor="avatar-zoom">
+                  Zoom
+                </label>
+                <input
+                  id="avatar-zoom"
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.01}
+                  value={avatarZoom}
+                  onChange={(event) =>
+                    setAvatarZoom(Number(event.target.value))
+                  }
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleAvatarCancel}
+                  disabled={avatarSaving}
+                  className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAvatarSave}
+                  disabled={avatarSaving}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                >
+                  {avatarSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
+              {avatarError && (
+                <div className="mt-3 text-xs text-rose-300">{avatarError}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {aiModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
