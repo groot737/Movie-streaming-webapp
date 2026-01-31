@@ -94,3 +94,18 @@ export const deleteList = async (listId) => {
   }
   return { ok: true };
 };
+
+export const importListByCode = async (shareCode) => {
+  const trimmed = (shareCode || "").trim().toUpperCase();
+  if (!trimmed) {
+    return { error: "Share code is required." };
+  }
+  const data = await requestJson("/api/lists/import", {
+    method: "POST",
+    body: JSON.stringify({ shareCode: trimmed }),
+  });
+  if (data?.error) {
+    return { error: data.error };
+  }
+  return { list: data?.list || null };
+};

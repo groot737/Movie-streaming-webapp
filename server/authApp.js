@@ -875,6 +875,72 @@ export const getAuthApp = () => {
     }
   });
 
+  const resolveImportedListName = async (userId, baseName) => {
+    const trimmed = (baseName || "").trim() || "Imported list";
+    const existing = await pool.query(
+      "SELECT name FROM lists WHERE user_id = $1",
+      [userId]
+    );
+    const existingNames = new Set(
+      existing.rows.map((row) => (row.name || "").toLowerCase())
+    );
+    if (!existingNames.has(trimmed.toLowerCase())) {
+      return trimmed;
+    }
+    const suffixBase = `${trimmed} (imported)`;
+    if (!existingNames.has(suffixBase.toLowerCase())) {
+      return suffixBase;
+    }
+    let index = 2;
+    while (index < 50) {
+      const candidate = `${trimmed} (imported ${index})`;
+      if (!existingNames.has(candidate.toLowerCase())) {
+        return candidate;
+      }
+      index += 1;
+    }
+    return `${trimmed} (imported ${Date.now()})`;
+  };
+
+  app.post("/api/lists/import", requireAuth, async (req, res, next) => {
+    const shareCode = (req.body?.shareCode || "").trim().toUpperCase();
+    if (!shareCode || shareCode.length !== SHARE_CODE_LENGTH) {
+      return res.status(400).json({ message: "Invalid share code." });
+    }
+    try {
+      const sourceResult = await pool.query(
+        "SELECT id, name FROM lists WHERE share_code = $1",
+        [shareCode]
+      );
+      const source = sourceResult.rows[0];
+      if (!source) {
+        return res.status(404).json({ message: "Shared list not found." });
+      }
+      const newName = await resolveImportedListName(req.user.id, source.name);
+      const created = await createListWithShareCode(req.user.id, newName);
+      const newList = created.rows[0];
+
+      await pool.query(
+        `INSERT INTO list_items (list_id, tmdb_id, media_type, title, poster_path, release_date)
+         SELECT $1, tmdb_id, media_type, title, poster_path, release_date
+         FROM list_items
+         WHERE list_id = $2
+         ON CONFLICT DO NOTHING`,
+        [newList.id, source.id]
+      );
+
+      return res.status(201).json({
+        list: {
+          id: newList.id,
+          name: newList.name,
+          shareCode: newList.share_code,
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   app.patch("/api/lists/:listId", requireAuth, async (req, res, next) => {
     const listId = Number(req.params.listId);
     if (!Number.isFinite(listId)) {

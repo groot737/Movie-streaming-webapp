@@ -9,6 +9,7 @@ import {
   deleteList,
   getLists,
   removeMovieFromList,
+  importListByCode,
 } from "./listStorage.js";
 
 const API_BASE =
@@ -98,6 +99,10 @@ function AccountPage({ initialTab = "rooms" }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiSaving, setAiSaving] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importCode, setImportCode] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
   const [selectedMedia, setSelectedMedia] = useState(null);
   const [selectedMediaType, setSelectedMediaType] = useState("movie");
   const [details, setDetails] = useState(null);
@@ -754,6 +759,18 @@ function AccountPage({ initialTab = "rooms" }) {
     setAiModalOpen(false);
   };
 
+  const handleOpenImportModal = () => {
+    setImportModalOpen(true);
+    setImportError("");
+  };
+
+  const handleCloseImportModal = () => {
+    setImportModalOpen(false);
+    setImportCode("");
+    setImportError("");
+    setImportLoading(false);
+  };
+
   const handleAiSubmit = (event) => {
     event.preventDefault();
     generateAiList();
@@ -1036,27 +1053,51 @@ function AccountPage({ initialTab = "rooms" }) {
                       Create list
                     </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleOpenAiModal}
-                    className="inline-flex w-fit items-center justify-center gap-2 self-start px-4 py-2 rounded-lg border border-slate-700/80 bg-slate-900/60 text-sm text-slate-100 hover:border-cyan-400/60 hover:text-cyan-100 transition"
-                  >
-                    <svg
-                      width="18"
-                      height="18"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleOpenAiModal}
+                      className="inline-flex w-fit items-center justify-center gap-2 self-start px-4 py-2 rounded-lg border border-slate-700/80 bg-slate-900/60 text-sm text-slate-100 hover:border-cyan-400/60 hover:text-cyan-100 transition"
                     >
-                      <path d="M12 3l1.6 3.9L18 8.5l-3.6 2.6L13 15l-3-2.2L6 13.5l1.4-4L4 8.5l4.4-1.6L10 3z" />
-                      <path d="M17.5 14.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
-                    </svg>
-                    Create list with AI
-                  </button>
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 3l1.6 3.9L18 8.5l-3.6 2.6L13 15l-3-2.2L6 13.5l1.4-4L4 8.5l4.4-1.6L10 3z" />
+                        <path d="M17.5 14.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+                      </svg>
+                      Create list with AI
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenImportModal}
+                      className="inline-flex w-fit items-center justify-center gap-2 self-start px-4 py-2 rounded-lg border border-slate-700/80 bg-slate-900/60 text-sm text-slate-100 hover:border-cyan-400/60 hover:text-cyan-100 transition"
+                    >
+                      <svg
+                        width="18"
+                        height="18"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M12 3v12" />
+                        <path d="m7 8 5 5 5-5" />
+                        <path d="M5 21h14" />
+                      </svg>
+                      Import list from user
+                    </button>
+                  </div>
                 </form>
                 {listError && (
                   <div className="mt-3 text-xs text-rose-300">{listError}</div>
@@ -1694,6 +1735,94 @@ function AccountPage({ initialTab = "rooms" }) {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {importModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={handleCloseImportModal}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Import list</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Paste a share code to import another user’s list.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseImportModal}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            <form
+              className="mt-5 space-y-4"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                if (importLoading) return;
+                const trimmed = importCode.trim();
+                if (!trimmed) {
+                  setImportError("Share code is required.");
+                  return;
+                }
+                setImportError("");
+                setImportLoading(true);
+                const result = await importListByCode(trimmed);
+                if (result?.error) {
+                  setImportError(result.error);
+                  setImportLoading(false);
+                  return;
+                }
+                const refresh = await getLists();
+                if (refresh?.error) {
+                  setImportError(refresh.error);
+                  setImportLoading(false);
+                  return;
+                }
+                syncLists(refresh.lists || [], result?.list?.id || "");
+                setListMessage("List imported.");
+                setListError("");
+                setImportLoading(false);
+                handleCloseImportModal();
+              }}
+            >
+              <div className="space-y-2">
+                <label
+                  className="text-xs text-slate-400"
+                  htmlFor="import-share-code"
+                >
+                  Share code
+                </label>
+                <input
+                  id="import-share-code"
+                  type="text"
+                  value={importCode}
+                  onChange={(event) => {
+                    setImportCode(event.target.value);
+                    setImportError("");
+                  }}
+                  placeholder="e.g. 8J2KQ1"
+                  className="w-full rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={importLoading}
+                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition disabled:opacity-60"
+              >
+                {importLoading ? "Importing..." : "Import list"}
+              </button>
+              {importError && (
+                <div className="text-xs text-rose-300">{importError}</div>
+              )}
+            </form>
           </div>
         </div>
       )}
