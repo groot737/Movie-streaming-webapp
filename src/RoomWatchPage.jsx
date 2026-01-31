@@ -1318,6 +1318,7 @@ function RoomWatchPage({ code = "" }) {
             id: data?.id || `${data?.from || "guest"}-${Date.now()}`,
             from: data?.from || null,
             name: data?.name || "Guest",
+            avatar: typeof data?.avatar === "string" ? data.avatar : "",
             message: gifMessage || messageText,
             tone: data?.tone || "default",
           },
@@ -1771,6 +1772,7 @@ function RoomWatchPage({ code = "" }) {
       id: messageId,
       from: clientIdRef.current,
       name: displayName || (isHost ? "Host" : "Guest"),
+      avatar: currentUser?.avatar || "",
       message: {
         type: "gif",
         url: gif.url,
@@ -1798,6 +1800,7 @@ function RoomWatchPage({ code = "" }) {
       id: messageId,
       from: clientIdRef.current,
       name: displayName || (isHost ? "Host" : "Guest"),
+      avatar: currentUser?.avatar || "",
       message: trimmed,
       tone: isHost ? "accent" : "default",
     };
@@ -2093,6 +2096,7 @@ function RoomWatchPage({ code = "" }) {
                       name={msg.name}
                       message={msg.message}
                       tone={msg.tone}
+                      avatar={msg.avatar}
                     />
                   ))
                 )}
@@ -2389,40 +2393,65 @@ function RoomWatchPage({ code = "" }) {
   );
 }
 
-function ChatBubble({ name, message, tone = "default" }) {
+function ChatBubble({ name, message, tone = "default", avatar = "" }) {
   const isSystem = name === "System";
   const isGif =
     message && typeof message === "object" && message.type === "gif";
+  const initials = name
+    ? name
+        .split(" ")
+        .map((part) => part.trim()[0])
+        .filter(Boolean)
+        .slice(0, 2)
+        .join("")
+        .toUpperCase()
+    : "?";
 
   return (
-    <div className="flex flex-col gap-1 items-start">
-      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">
-        {name}
-      </span>
-      <div
-        className={`rounded-2xl ${isGif ? "p-0 bg-transparent border-none" : "px-4 py-2.5"} text-[13px] leading-relaxed relative ${isGif
-          ? ""
-          : isSystem
-            ? tone === "system-join"
-              ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
-              : tone === "system-leave"
-                ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
-                : "bg-slate-800/20 text-slate-500 font-medium border-none"
-            : tone === "accent"
-              ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
-              : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
-          }`}
-      >
-        {isGif ? (
-          <img
-            src={message.previewUrl || message.url}
-            alt={message.alt || "GIF"}
-            className="w-full max-w-none rounded-3xl border border-slate-700/60"
-            loading="lazy"
-          />
-        ) : (
-          message
-        )}
+    <div className="flex items-start gap-3">
+      {!isSystem && (
+        <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900/70 overflow-hidden flex items-center justify-center text-[11px] font-bold text-slate-200">
+          {avatar ? (
+            <img
+              src={avatar}
+              alt={`${name} avatar`}
+              className="h-full w-full object-cover"
+              loading="lazy"
+            />
+          ) : (
+            initials
+          )}
+        </div>
+      )}
+      <div className="flex-1 flex flex-col gap-1 items-start">
+        <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest pl-2">
+          {name}
+        </span>
+        <div
+          className={`rounded-2xl ${isGif ? "p-0 bg-transparent border-none" : "px-4 py-2.5"} text-[13px] leading-relaxed relative ${isGif
+            ? ""
+            : isSystem
+              ? tone === "system-join"
+                ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium"
+                : tone === "system-leave"
+                  ? "bg-rose-500/10 text-rose-400 border border-rose-500/20 font-medium"
+                  : "bg-slate-800/20 text-slate-500 font-medium border-none"
+              : tone === "accent"
+                ? "border border-cyan-500/30 bg-gradient-to-br from-cyan-500/20 to-blue-600/10 text-cyan-50"
+                : "border border-slate-700/50 bg-slate-800/40 text-slate-200"
+            }`}
+        >
+          {isGif ? (
+            <img
+              src={message.previewUrl || message.url}
+              alt={message.alt || "GIF"}
+              className="w-full max-w-none rounded-3xl border border-slate-700/60"
+              loading="lazy"
+            />
+          ) : (
+            message
+          )}
+        </div>
       </div>
     </div>
   );
