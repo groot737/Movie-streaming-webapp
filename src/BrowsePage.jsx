@@ -33,7 +33,10 @@ const fadeUp = {
 };
 
 const fetchApiJson = async (path, signal) => {
-  const res = await fetch(`${API_BASE}${path}`, { signal });
+  const res = await fetch(`${API_BASE}${path}`, {
+    signal,
+    credentials: "include",
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const message = data?.message || `Request failed (${res.status}).`;

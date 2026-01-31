@@ -22,7 +22,10 @@ const TAB_LABELS = [
 ];
 
 const fetchApiJson = async (path, signal) => {
-  const res = await fetch(`${API_BASE}${path}`, { signal });
+  const res = await fetch(`${API_BASE}${path}`, {
+    signal,
+    credentials: "include",
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const message = data?.message || `Request failed (${res.status}).`;
@@ -676,8 +679,7 @@ function AccountPage({ initialTab = "rooms" }) {
     }
   };
 
-  const handleSearchSubmit = async (event) => {
-    event.preventDefault();
+  const runSearch = async () => {
     const query = searchQuery.trim();
     if (!query) {
       setSearchError("Search query is required.");
@@ -690,18 +692,25 @@ function AccountPage({ initialTab = "rooms" }) {
       const data = await fetchApiJson(
         `/api/tmdb/search/multi?${params.toString()}`
       );
-      const items = (data?.results || [])
-        .filter(
-          (item) => item.media_type === "movie" || item.media_type === "tv"
-        )
-        .slice(0, 10)
-        .map((item) => ({
-          id: item.id,
-          mediaType: item.media_type,
-          title: item.title || item.name || "Untitled",
-          poster_path: item.poster_path || null,
-          release_date: item.release_date || item.first_air_date || null,
-        }));
+      const rawResults = data?.results || data?.data?.results || [];
+      const items = rawResults
+        .map((item) => {
+          const mediaType =
+            item.media_type ||
+            (item.first_air_date || item.name ? "tv" : "movie");
+          if (mediaType !== "movie" && mediaType !== "tv") {
+            return null;
+          }
+          return {
+            id: item.id,
+            mediaType,
+            title: item.title || item.name || "Untitled",
+            poster_path: item.poster_path || null,
+            release_date: item.release_date || item.first_air_date || null,
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 10);
       setSearchResults(items);
       if (!items.length) {
         setSearchError("No results found.");
@@ -711,6 +720,11 @@ function AccountPage({ initialTab = "rooms" }) {
     } finally {
       setSearchLoading(false);
     }
+  };
+
+  const handleSearchSubmit = (event) => {
+    event.preventDefault();
+    runSearch();
   };
 
   const handleOpenSearchModal = () => {
@@ -1864,14 +1878,15 @@ function AccountPage({ initialTab = "rooms" }) {
                 placeholder="Search movies or series"
                 className="flex-1 rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
               />
-              <button
-                type="submit"
-                disabled={searchLoading}
-                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
-              >
-                {searchLoading ? "Searching..." : "Search"}
-              </button>
-            </form>
+                <button
+                  type="button"
+                  onClick={runSearch}
+                  disabled={searchLoading}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                >
+                  {searchLoading ? "Searching..." : "Search"}
+                </button>
+              </form>
             {searchError && (
               <div className="mt-3 text-xs text-rose-300">{searchError}</div>
             )}
