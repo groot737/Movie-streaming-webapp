@@ -180,6 +180,11 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
     [credits]
   );
 
+  const handleOpenActor = (person) => {
+    if (!person?.id) return;
+    window.location.hash = `#actor?id=${person.id}`;
+  };
+
   const handleOpenSimilar = (item) => {
     const type = mediaType === "tv" ? "tv" : "movie";
     window.location.hash = `#watch?id=${item.id}&type=${type}`;
@@ -446,9 +451,11 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
                 className="flex gap-3 overflow-x-auto pb-4 pr-6 scrollbar-hide scroll-smooth"
               >
                 {cast.map((person) => (
-                  <div
+                  <button
                     key={person.id}
-                    className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden flex-shrink-0 w-36"
+                    type="button"
+                    onClick={() => handleOpenActor(person)}
+                    className="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden flex-shrink-0 w-36 text-left hover:border-slate-600 transition focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
                   >
                     <div className="aspect-[2/3] bg-slate-800">
                       {person.profile_path ? (
@@ -472,7 +479,7 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
                         {person.character || "Cast"}
                       </div>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -518,7 +525,6 @@ function WatchPage({ mediaId = 550, mediaType = "movie" }) {
             </div>
           </div>
 
-          <div className="text-xs text-slate-500">Powered by TMDB</div>
         </section>
       </main>
 

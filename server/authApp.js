@@ -1359,6 +1359,30 @@ export const getAuthApp = () => {
     return res.json(result.data);
   });
 
+  app.get("/api/tmdb/person/:id", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid TMDB id." });
+    }
+    const result = await fetchTmdb(`/person/${id}`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/person/:id/credits", async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "Invalid TMDB id." });
+    }
+    const result = await fetchTmdb(`/person/${id}/combined_credits`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
   app.get("/api/tmdb/similar/:type/:id", async (req, res) => {
     const type = req.params.type === "tv" ? "tv" : "movie";
     const id = Number(req.params.id);

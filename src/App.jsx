@@ -7,6 +7,7 @@ import InviteListPage from "./InviteListPage.jsx";
 import RoomPage from "./RoomPage.jsx";
 import RoomWatchPage from "./RoomWatchPage.jsx";
 import ResetPasswordPage from "./ResetPasswordPage.jsx";
+import ActorPage from "./ActorPage.jsx";
 
 const parseHash = () => {
   const hash = window.location.hash || "";
@@ -26,6 +27,12 @@ const parseHash = () => {
     const params = new URLSearchParams(query);
     const tab = params.get("tab") || "rooms";
     return { page: "account", tab };
+  }
+  if (hash.startsWith("#actor")) {
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    const params = new URLSearchParams(query);
+    const id = params.get("id") || "0";
+    return { page: "actor", personId: Number(id) || 0 };
   }
   if (hash.startsWith("#room-watch")) {
     const query = hash.includes("?") ? hash.split("?")[1] : "";
@@ -85,6 +92,10 @@ function App() {
 
   if (route.page === "account") {
     return <AccountPage initialTab={route.tab} />;
+  }
+
+  if (route.page === "actor") {
+    return <ActorPage personId={route.personId} />;
   }
 
   if (route.page === "room") {
