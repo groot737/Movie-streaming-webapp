@@ -170,9 +170,6 @@ function RoomPage({ mediaId = 550, mediaType = "movie" }) {
             <a href="#" className="hover:text-slate-100 transition">
               Home
             </a>
-            <a href="#browse" className="hover:text-slate-100 transition">
-              Browse
-            </a>
           </nav>
           <div className="text-xs text-slate-400">Room setup</div>
         </div>
