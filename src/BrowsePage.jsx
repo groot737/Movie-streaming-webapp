@@ -632,7 +632,6 @@ function BrowsePage() {
             </>
           )}
 
-          <div className="text-xs text-slate-500">Powered by TMDB</div>
         </section>
       </main>
 
@@ -843,7 +842,7 @@ function HeroBanner({ movie, backdrop, onOpen }) {
           </h1>
           <p className="mt-5 text-slate-300 max-w-xl">
             {movie?.overview ||
-              "Explore trending, top rated, and upcoming picks powered by TMDB."}
+              "Explore trending, top rated, and upcoming picks."}
           </p>
           <div className="mt-8 flex flex-wrap gap-3">
             <button
@@ -1748,7 +1747,6 @@ function Footer() {
           <div className="mt-1">Personal project. Private rooms only.</div>
         </div>
         <div className="space-y-1">
-          <div>Powered by TMDB</div>
           <div>(c) 2026 GioStream</div>
         </div>
       </div>
