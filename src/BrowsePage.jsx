@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { addMovieToList, getLists } from "./listStorage.js";
+import AiPromptModal from "./AiPromptModal.jsx";
 
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const BACKDROP_BASE = "https://image.tmdb.org/t/p/original";
@@ -125,6 +126,7 @@ function BrowsePage() {
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
+  const [aiModalOpen, setAiModalOpen] = useState(false);
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authMode, setAuthMode] = useState("signin");
   const [currentUser, setCurrentUser] = useState(null);
@@ -601,6 +603,33 @@ function BrowsePage() {
             </div>
           ) : (
             <>
+              <section className="rounded-2xl border border-slate-800/70 bg-gradient-to-br from-slate-900/70 via-slate-900/40 to-slate-950/70 p-4 sm:p-5">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-[0.25em] text-cyan-400">
+                      Not sure?
+                    </div>
+                    <h2 className="text-lg font-semibold mt-1">
+                      Don't know what to watch?
+                    </h2>
+                    <p className="text-xs text-slate-300 mt-1 max-w-md">
+                      Describe a vibe and let our AI choose movie or series for you.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      if (!currentUser) {
+                        handleOpenAuth("signin");
+                        return;
+                      }
+                      setAiModalOpen(true);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-cyan-400 text-slate-950 text-sm font-semibold hover:bg-cyan-300 transition"
+                  >
+                    Ask AI
+                  </button>
+                </div>
+              </section>
               {Object.keys(MOVIE_CATEGORY_LABELS).map((category) => (
                 <MovieRow
                   key={category}
@@ -648,6 +677,17 @@ function BrowsePage() {
             error={detailsError}
             onClose={handleCloseMovie}
             canManageLists={Boolean(currentUser)}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {aiModalOpen && (
+          <AiPromptModal
+            onClose={() => setAiModalOpen(false)}
+            onSelect={(item) => {
+              setAiModalOpen(false);
+              handleOpenMedia(item, item.mediaType || "movie");
+            }}
           />
         )}
       </AnimatePresence>
@@ -989,7 +1029,7 @@ function MovieCard({ movie, onClick, size = "grid" }) {
   );
 }
 
-function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
+export function AuthModal({ mode, onClose, onToggleMode, onAuthSuccess }) {
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

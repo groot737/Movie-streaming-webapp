@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { MovieModal } from "./BrowsePage.jsx";
+import { AuthModal, MovieModal } from "./BrowsePage.jsx";
+import AiPromptModal from "./AiPromptModal.jsx";
 
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const API_BASE =
@@ -112,6 +113,9 @@ function DiscoverPage() {
   const [genreData, setGenreData] = useState({ movie: [], tv: [] });
   const [genreLoading, setGenreLoading] = useState(false);
   const [genreError, setGenreError] = useState("");
+  const [currentUser, setCurrentUser] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState("signin");
   const [results, setResults] = useState([]);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -124,6 +128,7 @@ function DiscoverPage() {
   const [details, setDetails] = useState(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [detailsError, setDetailsError] = useState("");
+  const [aiModalOpen, setAiModalOpen] = useState(false);
 
   const abortRef = useRef(null);
   const detailsAbortRef = useRef(null);
@@ -166,6 +171,29 @@ function DiscoverPage() {
       controller.abort();
     };
   }, []);
+
+  useEffect(() => {
+    const fetchSession = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        if (data?.user) {
+          setCurrentUser(data.user);
+        }
+      } catch (err) {
+        // Ignore session errors on load.
+      }
+    };
+    fetchSession();
+  }, []);
+
+  const handleOpenAuth = (mode = "signin") => {
+    setAuthMode(mode);
+    setShowAuthModal(true);
+  };
 
   useEffect(() => {
     if (abortRef.current) {
@@ -287,9 +315,36 @@ function DiscoverPage() {
       </header>
 
       <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
+        <section className="rounded-2xl border border-slate-800/70 bg-gradient-to-br from-slate-900/70 via-slate-900/40 to-slate-950/70 p-4 sm:p-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.25em] text-cyan-400">
+                Not sure?
+              </div>
+              <h2 className="text-lg font-semibold mt-1">
+                Don't know what to watch?
+              </h2>
+              <p className="text-xs text-slate-300 mt-1 max-w-md">
+                Describe a vibe and let our AI choose movie or series for you.
+              </p>
+            </div>
+            <button
+              onClick={() => {
+                if (!currentUser) {
+                  handleOpenAuth("signin");
+                  return;
+                }
+                setAiModalOpen(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-cyan-400 text-slate-950 text-sm font-semibold hover:bg-cyan-300 transition"
+            >
+              Ask AI
+            </button>
+          </div>
+        </section>
         <section className="rounded-3xl border border-slate-900 bg-slate-900/40 p-5 space-y-5">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Filters</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Filters</h2>
               <button
                 onClick={handleClear}
                 className="text-xs px-3 py-1.5 rounded-full border border-slate-700 text-slate-200 hover:border-slate-500 transition"
@@ -536,6 +591,25 @@ function DiscoverPage() {
             setDetails(null);
             setDetailsError("");
           }}
+        />
+      )}
+      {aiModalOpen && (
+        <AiPromptModal
+          onClose={() => setAiModalOpen(false)}
+          onSelect={(item) => {
+            setAiModalOpen(false);
+            handleOpenMedia(item, item.mediaType || "movie");
+          }}
+        />
+      )}
+      {showAuthModal && (
+        <AuthModal
+          mode={authMode}
+          onClose={() => setShowAuthModal(false)}
+          onAuthSuccess={(user) => setCurrentUser(user)}
+          onToggleMode={() =>
+            setAuthMode((prev) => (prev === "signin" ? "register" : "signin"))
+          }
         />
       )}
     </div>
