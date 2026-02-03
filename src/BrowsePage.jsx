@@ -9,6 +9,7 @@ const API_BASE =
 
 const NAV_LINKS = [
   { label: "Home", href: "#" },
+  { label: "Discover", href: "#discover" },
   { label: "Join room", href: "#join-room", isAction: true },
 ];
 

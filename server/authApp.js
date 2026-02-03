@@ -1316,6 +1316,27 @@ export const getAuthApp = () => {
     return res.json(result.data);
   });
 
+  app.get("/api/tmdb/genres/:type", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const result = await fetchTmdb(`/genre/${type}/list`);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
+  app.get("/api/tmdb/discover/:type", async (req, res) => {
+    const type = req.params.type === "tv" ? "tv" : "movie";
+    const page = Number(req.query?.page) || 1;
+    const params = { ...req.query, page: String(page) };
+    delete params.api_key;
+    const result = await fetchTmdb(`/discover/${type}`, params);
+    if (result.error) {
+      return res.status(502).json({ message: result.error });
+    }
+    return res.json(result.data);
+  });
+
   app.get("/api/tmdb/search/multi", async (req, res) => {
     const query = (req.query?.query || "").trim();
     if (!query) {
