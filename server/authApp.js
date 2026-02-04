@@ -17,6 +17,8 @@ let resetTableReady = false;
 let listCollaboratorsReady = false;
 let userBioColumnReady = false;
 let userCoverColumnReady = false;
+let postsTableReady = false;
+let postLikesTableReady = false;
 
 const ensureResetTable = async () => {
   if (resetTableReady) {
@@ -69,6 +71,49 @@ const ensureUsersCoverColumn = async () => {
   }
   await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS cover TEXT;");
   userCoverColumnReady = true;
+};
+
+const ensurePostsTable = async () => {
+  if (postsTableReady) {
+    return;
+  }
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS posts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      body TEXT,
+      gif_url TEXT,
+      gif_preview_url TEXT,
+      gif_alt TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );`
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS posts_user_id_idx ON posts(user_id);"
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS posts_created_at_idx ON posts(created_at DESC);"
+  );
+  postsTableReady = true;
+};
+
+const ensurePostLikesTable = async () => {
+  if (postLikesTableReady) {
+    return;
+  }
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS post_likes (
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (post_id, user_id)
+    );`
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS post_likes_user_id_idx ON post_likes(user_id);"
+  );
+  postLikesTableReady = true;
 };
 
 const configurePassport = () => {
@@ -682,6 +727,186 @@ export const getAuthApp = () => {
         [bio, req.user.id]
       );
       return res.json({ user: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/posts", requireAuth, async (req, res, next) => {
+    try {
+      await ensurePostsTable();
+      await ensurePostLikesTable();
+      const result = await pool.query(
+        `SELECT posts.id,
+                posts.user_id,
+                posts.body,
+                posts.gif_url,
+                posts.gif_preview_url,
+                posts.gif_alt,
+                posts.created_at,
+                posts.updated_at,
+                COALESCE(likes.like_count, 0) AS like_count,
+                COALESCE(user_likes.is_liked, false) AS liked
+         FROM posts
+         LEFT JOIN (
+           SELECT post_id, COUNT(*)::int AS like_count
+           FROM post_likes
+           GROUP BY post_id
+         ) likes ON likes.post_id = posts.id
+         LEFT JOIN (
+           SELECT post_id, TRUE AS is_liked
+           FROM post_likes
+           WHERE user_id = $1
+         ) user_likes ON user_likes.post_id = posts.id
+         WHERE posts.user_id = $1
+         ORDER BY posts.created_at DESC`,
+        [req.user.id]
+      );
+      return res.json({ posts: result.rows });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/posts", requireAuth, async (req, res, next) => {
+    const body = (req.body?.body || "").trim();
+    const gif = req.body?.gif || null;
+    const gifUrl = gif?.url || null;
+    const gifPreviewUrl = gif?.previewUrl || null;
+    const gifAlt = gif?.alt || null;
+    if (!body && !gifUrl) {
+      return res.status(400).json({ message: "Post content is required." });
+    }
+    if (body.length > 280) {
+      return res
+        .status(400)
+        .json({ message: "Post must be 280 characters or less." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostLikesTable();
+      const result = await pool.query(
+        `INSERT INTO posts (user_id, body, gif_url, gif_preview_url, gif_alt)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, user_id, body, gif_url, gif_preview_url, gif_alt, created_at, updated_at`,
+        [req.user.id, body || null, gifUrl, gifPreviewUrl, gifAlt]
+      );
+      const post = result.rows[0];
+      return res.status(201).json({
+        post: {
+          ...post,
+          like_count: 0,
+          liked: false,
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.patch("/api/posts/:postId", requireAuth, async (req, res, next) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isFinite(postId)) {
+      return res.status(400).json({ message: "Invalid post id." });
+    }
+    const body = (req.body?.body || "").trim();
+    const gif = req.body?.gif || null;
+    const gifUrl = gif?.url || null;
+    const gifPreviewUrl = gif?.previewUrl || null;
+    const gifAlt = gif?.alt || null;
+    if (!body && !gifUrl) {
+      return res.status(400).json({ message: "Post content is required." });
+    }
+    if (body.length > 280) {
+      return res
+        .status(400)
+        .json({ message: "Post must be 280 characters or less." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostLikesTable();
+      const result = await pool.query(
+        `UPDATE posts
+         SET body = $1,
+             gif_url = $2,
+             gif_preview_url = $3,
+             gif_alt = $4,
+             updated_at = NOW()
+         WHERE id = $5 AND user_id = $6
+         RETURNING id, user_id, body, gif_url, gif_preview_url, gif_alt, created_at, updated_at`,
+        [body || null, gifUrl, gifPreviewUrl, gifAlt, postId, req.user.id]
+      );
+      if (!result.rows.length) {
+        return res.status(404).json({ message: "Post not found." });
+      }
+      const likes = await pool.query(
+        "SELECT COUNT(*)::int AS like_count FROM post_likes WHERE post_id = $1",
+        [postId]
+      );
+      const liked = await pool.query(
+        "SELECT 1 FROM post_likes WHERE post_id = $1 AND user_id = $2",
+        [postId, req.user.id]
+      );
+      return res.json({
+        post: {
+          ...result.rows[0],
+          like_count: likes.rows?.[0]?.like_count || 0,
+          liked: liked.rows.length > 0,
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.delete("/api/posts/:postId", requireAuth, async (req, res, next) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isFinite(postId)) {
+      return res.status(400).json({ message: "Invalid post id." });
+    }
+    try {
+      await ensurePostsTable();
+      const result = await pool.query(
+        "DELETE FROM posts WHERE id = $1 AND user_id = $2 RETURNING id",
+        [postId, req.user.id]
+      );
+      if (!result.rows.length) {
+        return res.status(404).json({ message: "Post not found." });
+      }
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/posts/:postId/like", requireAuth, async (req, res, next) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isFinite(postId)) {
+      return res.status(400).json({ message: "Invalid post id." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostLikesTable();
+      const desiredLiked = Boolean(req.body?.liked);
+      if (desiredLiked) {
+        await pool.query(
+          "INSERT INTO post_likes (post_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [postId, req.user.id]
+        );
+      } else {
+        await pool.query(
+          "DELETE FROM post_likes WHERE post_id = $1 AND user_id = $2",
+          [postId, req.user.id]
+        );
+      }
+      const likes = await pool.query(
+        "SELECT COUNT(*)::int AS like_count FROM post_likes WHERE post_id = $1",
+        [postId]
+      );
+      return res.json({
+        liked: desiredLiked,
+        like_count: likes.rows?.[0]?.like_count || 0,
+      });
     } catch (err) {
       return next(err);
     }

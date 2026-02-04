@@ -166,6 +166,31 @@ function DashboardPage() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    const loadPosts = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/posts`, {
+          credentials: "include",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.message || "Unable to load posts.");
+        }
+        if (!active) return;
+        setPosts(Array.isArray(data?.posts) ? data.posts : []);
+      } catch (err) {
+        if (active) {
+          setPosts([]);
+        }
+      }
+    };
+    loadPosts();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (coverSource) {
         URL.revokeObjectURL(coverSource);
@@ -173,15 +198,7 @@ function DashboardPage() {
     };
   }, [coverSource]);
 
-  const [posts, setPosts] = useState([
-    {
-      id: 1,
-      body: "Just finished a late-night sci-fi binge. Any recs for tomorrow?",
-      time: "1h",
-      likes: 0,
-      liked: false,
-    },
-  ]);
+  const [posts, setPosts] = useState([]);
   const [postMessage, setPostMessage] = useState("");
   const [editingPostId, setEditingPostId] = useState(null);
   const [editingBody, setEditingBody] = useState("");
@@ -202,6 +219,7 @@ function DashboardPage() {
   const [gifError, setGifError] = useState("");
   const [newPostGif, setNewPostGif] = useState(null);
   const gifAbortRef = useRef(null);
+  const likeDebounceRef = useRef(new Map());
 
   useEffect(() => {
     if (!postMessage) return undefined;
@@ -210,6 +228,19 @@ function DashboardPage() {
     }, 3000);
     return () => clearTimeout(timeoutId);
   }, [postMessage]);
+
+  const formatPostTime = (timestamp) => {
+    if (!timestamp) return "";
+    const date = new Date(timestamp);
+    const diffMs = Date.now() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    if (diffMins < 1) return "Just now";
+    if (diffMins < 60) return `${diffMins}m`;
+    const diffHours = Math.floor(diffMins / 60);
+    if (diffHours < 24) return `${diffHours}h`;
+    const diffDays = Math.floor(diffHours / 24);
+    return `${diffDays}d`;
+  };
 
   const coverUrl = user.cover
     ? user.cover.startsWith("http")
@@ -441,8 +472,15 @@ function DashboardPage() {
                         <div className="text-sm sm:text-base font-semibold text-slate-100">
                           {user.username || "User"}
                         </div>
-                        <div className="text-[11px] sm:text-xs text-slate-400" title="Feb 4, 2026 at 9:12 PM">
-                          {post.time} · Public
+                        <div
+                          className="text-[11px] sm:text-xs text-slate-400"
+                          title={
+                            post.created_at
+                              ? new Date(post.created_at).toLocaleString()
+                              : ""
+                          }
+                        >
+                          {formatPostTime(post.created_at)} · Public
                         </div>
                       </div>
                     </button>
@@ -465,8 +503,16 @@ function DashboardPage() {
                             onClick={() => {
                             setActiveMenuId(null);
                             setEditingPostId(post.id);
-                            setEditingBody(post.body);
-                            setEditingGif(post.gif || null);
+                            setEditingBody(post.body || "");
+                            setEditingGif(
+                              post.gif_url
+                                ? {
+                                    url: post.gif_url,
+                                    previewUrl: post.gif_preview_url,
+                                    alt: post.gif_alt,
+                                  }
+                                : null
+                            );
                             setEditGifOpen(false);
                             setEditGifQuery("");
                             setEditGifResults([]);
@@ -614,21 +660,31 @@ function DashboardPage() {
                         <button
                           type="button"
                           onClick={() => {
-                            setPosts((prev) =>
-                              prev.map((item) =>
-                                item.id === post.id
-                                  ? {
-                                      ...item,
-                                      body: editingBody.trim() || item.body,
-                                      gif: editingGif || null,
-                                    }
-                                  : item
-                              )
-                            );
-                            setEditingPostId(null);
-                            setEditingBody("");
-                            setEditingGif(null);
-                            setPostMessage("Post updated.");
+                            const trimmed = editingBody.trim();
+                            if (!trimmed && !editingGif) return;
+                            fetch(`${API_BASE}/api/posts/${post.id}`, {
+                              method: "PATCH",
+                              headers: { "Content-Type": "application/json" },
+                              credentials: "include",
+                              body: JSON.stringify({
+                                body: trimmed,
+                                gif: editingGif || null,
+                              }),
+                            })
+                              .then((res) => res.json().catch(() => ({})))
+                              .then((data) => {
+                                if (!data?.post) return;
+                                setPosts((prev) =>
+                                  prev.map((item) =>
+                                    item.id === post.id ? data.post : item
+                                  )
+                                );
+                                setEditingPostId(null);
+                                setEditingBody("");
+                                setEditingGif(null);
+                                setPostMessage("Post updated.");
+                              })
+                              .catch(() => {});
                           }}
                           className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
                         >
@@ -654,11 +710,11 @@ function DashboardPage() {
                           {post.body}
                         </p>
                       )}
-                      {post.gif?.url && (
+                      {post.gif_url && (
                         <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/40">
                           <img
-                            src={post.gif.previewUrl || post.gif.url}
-                            alt={post.gif.alt || "GIF"}
+                            src={post.gif_preview_url || post.gif_url}
+                            alt={post.gif_alt || "GIF"}
                             className="w-full max-h-64 object-contain"
                             loading="lazy"
                           />
@@ -669,7 +725,8 @@ function DashboardPage() {
                     <div className="mt-3 border-t border-slate-800 pt-2.5">
                     <div className="flex items-center justify-between text-[11px] sm:text-xs text-slate-400">
                       <div>
-                        {post.likes || 0} {post.likes === 1 ? "like" : "likes"}
+                        {post.like_count || 0}{" "}
+                        {post.like_count === 1 ? "like" : "likes"}
                       </div>
                       <div>0 comments</div>
                     </div>
@@ -732,17 +789,57 @@ function DashboardPage() {
                           type="button"
                           onClick={() => {
                             if (action.label !== "Like") return;
+                            const nextLiked = !post.liked;
                             setPosts((prev) =>
-                              prev.map((item) => {
-                                if (item.id !== post.id) return item;
-                                const liked = !item.liked;
-                                const likes = Math.max(
-                                  0,
-                                  (item.likes || 0) + (liked ? 1 : -1)
-                                );
-                                return { ...item, liked, likes };
-                              })
+                              prev.map((item) =>
+                                item.id === post.id
+                                  ? {
+                                      ...item,
+                                      liked: nextLiked,
+                                      like_count: Math.max(
+                                        0,
+                                        (item.like_count || 0) +
+                                          (nextLiked ? 1 : -1)
+                                      ),
+                                    }
+                                  : item
+                              )
                             );
+                            const existing = likeDebounceRef.current.get(post.id);
+                            if (existing?.timeoutId) {
+                              clearTimeout(existing.timeoutId);
+                            }
+                            const timeoutId = setTimeout(() => {
+                              fetch(`${API_BASE}/api/posts/${post.id}/like`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                credentials: "include",
+                                body: JSON.stringify({ liked: nextLiked }),
+                              })
+                                .then((res) => res.json().catch(() => ({})))
+                                .then((data) => {
+                                  setPosts((prev) =>
+                                    prev.map((item) =>
+                                      item.id === post.id
+                                        ? {
+                                            ...item,
+                                            liked: data?.liked ?? item.liked,
+                                            like_count:
+                                              typeof data?.like_count === "number"
+                                                ? data.like_count
+                                                : item.like_count,
+                                          }
+                                        : item
+                                    )
+                                  );
+                                })
+                                .catch(() => {});
+                              likeDebounceRef.current.delete(post.id);
+                            }, 2000);
+                            likeDebounceRef.current.set(post.id, {
+                              timeoutId,
+                              liked: nextLiked,
+                            });
                           }}
                           className={`w-full rounded-lg py-1.5 hover:bg-slate-900/60 transition flex items-center justify-center gap-1.5 sm:gap-2 ${
                             action.label === "Like" && post.liked
@@ -858,17 +955,26 @@ function DashboardPage() {
               >
                 Cancel
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPosts((prev) =>
-                    prev.filter((item) => item.id !== deletePostId)
-                  );
-                  setDeletePostId(null);
-                  setPostMessage("Post deleted.");
-                }}
-                className="px-4 py-2 rounded-lg bg-rose-500 text-white font-medium hover:bg-rose-400 transition"
-              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetch(`${API_BASE}/api/posts/${deletePostId}`, {
+                      method: "DELETE",
+                      credentials: "include",
+                    })
+                      .then((res) => res.json().catch(() => ({})))
+                      .then((data) => {
+                        if (!data?.ok) return;
+                        setPosts((prev) =>
+                          prev.filter((item) => item.id !== deletePostId)
+                        );
+                        setDeletePostId(null);
+                        setPostMessage("Post deleted.");
+                      })
+                      .catch(() => {});
+                  }}
+                  className="px-4 py-2 rounded-lg bg-rose-500 text-white font-medium hover:bg-rose-400 transition"
+                >
                 Delete
               </button>
             </div>
@@ -1026,25 +1132,29 @@ function DashboardPage() {
                   onClick={() => {
                     const trimmed = newPostBody.trim();
                     if (!trimmed && !newPostGif) return;
-                    setPosts((prev) => [
-                      {
-                        id: Date.now(),
+                    fetch(`${API_BASE}/api/posts`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({
                         body: trimmed,
-                        time: "Just now",
                         gif: newPostGif || null,
-                        likes: 0,
-                        liked: false,
-                      },
-                      ...prev,
-                    ]);
-                    setCreateModalOpen(false);
-                    setNewPostBody("");
-                    setNewPostGif(null);
-                    setGifOpen(false);
-                    setGifQuery("");
-                    setGifResults([]);
-                    setGifError("");
-                    setPostMessage("Post created.");
+                      }),
+                    })
+                      .then((res) => res.json().catch(() => ({})))
+                      .then((data) => {
+                        if (!data?.post) return;
+                        setPosts((prev) => [data.post, ...prev]);
+                        setCreateModalOpen(false);
+                        setNewPostBody("");
+                        setNewPostGif(null);
+                        setGifOpen(false);
+                        setGifQuery("");
+                        setGifResults([]);
+                        setGifError("");
+                        setPostMessage("Post created.");
+                      })
+                      .catch(() => {});
                   }}
                   className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
                 >
