@@ -55,6 +55,17 @@ export const updateListName = async (listId, name) => {
   return { list: data?.list || null };
 };
 
+export const updateListVisibility = async (listId, isPublic) => {
+  const data = await requestJson(`/api/lists/${listId}/visibility`, {
+    method: "PATCH",
+    body: JSON.stringify({ public: Boolean(isPublic) }),
+  });
+  if (data?.error) {
+    return { error: data.error };
+  }
+  return { list: data?.list || null };
+};
+
 export const addMovieToList = async (listId, movie) => {
   const payload = {
     tmdbId: movie.id,

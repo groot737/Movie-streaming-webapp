@@ -19,6 +19,7 @@ let userBioColumnReady = false;
 let userCoverColumnReady = false;
 let postsTableReady = false;
 let postLikesTableReady = false;
+let listPublicColumnReady = false;
 
 const ensureResetTable = async () => {
   if (resetTableReady) {
@@ -114,6 +115,16 @@ const ensurePostLikesTable = async () => {
     "CREATE INDEX IF NOT EXISTS post_likes_user_id_idx ON post_likes(user_id);"
   );
   postLikesTableReady = true;
+};
+
+const ensureListPublicColumn = async () => {
+  if (listPublicColumnReady) {
+    return;
+  }
+  await pool.query(
+    "ALTER TABLE lists ADD COLUMN IF NOT EXISTS public BOOLEAN NOT NULL DEFAULT TRUE;"
+  );
+  listPublicColumnReady = true;
 };
 
 const configurePassport = () => {
@@ -1259,8 +1270,9 @@ export const getAuthApp = () => {
   app.get("/api/lists", requireAuth, async (req, res, next) => {
     try {
       await ensureListCollaboratorsTable();
+      await ensureListPublicColumn();
       const listsResult = await pool.query(
-        `SELECT lists.id, lists.name, lists.share_code, lists.user_id,
+        `SELECT lists.id, lists.name, lists.share_code, lists.user_id, lists.public,
                 users.username AS owner_username, users.avatar AS owner_avatar
          FROM lists
          JOIN users ON users.id = lists.user_id
@@ -1331,6 +1343,7 @@ export const getAuthApp = () => {
           id: list.id,
           name: list.name,
           shareCode: list.share_code || "",
+          public: list.public !== false,
           isOwner,
           owner,
           collaborators,
@@ -1630,22 +1643,52 @@ export const getAuthApp = () => {
     }
   });
 
+  app.patch("/api/lists/:listId/visibility", requireAuth, async (req, res, next) => {
+    const listId = Number(req.params.listId);
+    if (!Number.isFinite(listId)) {
+      return res.status(400).json({ message: "Invalid list id." });
+    }
+    const isPublic = Boolean(req.body?.public);
+    try {
+      await ensureListPublicColumn();
+      const listResult = await pool.query(
+        "SELECT id, user_id FROM lists WHERE id = $1",
+        [listId]
+      );
+      const list = listResult.rows[0];
+      if (!list) {
+        return res.status(404).json({ message: "List not found." });
+      }
+      if (list.user_id !== req.user.id) {
+        return res.status(403).json({ message: "Not allowed." });
+      }
+      const result = await pool.query(
+        "UPDATE lists SET public = $1 WHERE id = $2 RETURNING id, public",
+        [isPublic, listId]
+      );
+      return res.json({ list: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   app.get("/api/lists/share/:code", async (req, res, next) => {
     const shareCode = (req.params.code || "").trim().toUpperCase();
     if (!shareCode || shareCode.length !== SHARE_CODE_LENGTH) {
       return res.status(400).json({ message: "Invalid share code." });
     }
     try {
+      await ensureListPublicColumn();
       const listResult = await pool.query(
         `SELECT lists.id, lists.name, lists.share_code, users.username, users.avatar
          FROM lists
          JOIN users ON users.id = lists.user_id
-         WHERE lists.share_code = $1`,
+         WHERE lists.share_code = $1 AND lists.public = TRUE`,
         [shareCode]
       );
       const list = listResult.rows[0];
       if (!list) {
-        return res.status(404).json({ message: "Shared list not found." });
+        return res.status(404).json({ message: "This list is private." });
       }
       const itemsResult = await pool.query(
         `SELECT tmdb_id, media_type, title, poster_path, release_date

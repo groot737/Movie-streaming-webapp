@@ -6,6 +6,7 @@ const API_BASE =
 const KLIPY_API_KEY =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_KLIPY_API) || "";
 const KLIPY_API_BASE = "https://api.klipy.com/api/v1";
+const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 
 const createImage = (url) =>
   new Promise((resolve, reject) => {
@@ -111,6 +112,7 @@ const fetchKlipySearch = async (query, signal) => {
 };
 
 function DashboardPage() {
+  const [activeTab, setActiveTab] = useState("Posts");
   const [user, setUser] = useState({
     username: "",
     avatar: "",
@@ -127,6 +129,8 @@ function DashboardPage() {
   const [coverSaving, setCoverSaving] = useState(false);
   const [coverError, setCoverError] = useState("");
   const [activeMenuId, setActiveMenuId] = useState(null);
+  const [lists, setLists] = useState([]);
+  const [listsLoading, setListsLoading] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -160,6 +164,39 @@ function DashboardPage() {
       }
     };
     loadUser();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const loadLists = async () => {
+      setListsLoading(true);
+      try {
+        const response = await fetch(`${API_BASE}/api/lists`, {
+          credentials: "include",
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.message || "Unable to load lists.");
+        }
+        if (!active) return;
+        const publicLists = (data?.lists || []).filter(
+          (list) => list.public !== false
+        );
+        setLists(publicLists);
+      } catch (err) {
+        if (active) {
+          setLists([]);
+        }
+      } finally {
+        if (active) {
+          setListsLoading(false);
+        }
+      }
+    };
+    loadLists();
     return () => {
       active = false;
     };
@@ -377,11 +414,11 @@ function DashboardPage() {
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 text-xs sm:text-sm text-slate-300">
                   <div>
-                    <span className="text-slate-100 font-semibold">128</span>{" "}
+                    <span className="text-slate-100 font-semibold">0</span>{" "}
                     followers
                   </div>
                   <div>
-                    <span className="text-slate-100 font-semibold">92</span>{" "}
+                    <span className="text-slate-100 font-semibold">0</span>{" "}
                     following
                   </div>
                 </div>
@@ -394,12 +431,13 @@ function DashboardPage() {
       <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-20 sm:pt-24 pb-12">
         <div className="sticky top-0 z-20 bg-slate-950/90 backdrop-blur border-b border-slate-900">
           <div className="max-w-2xl mx-auto flex flex-wrap justify-center gap-2 sm:gap-3 py-4 sm:py-3">
-            {["Posts", "Media", "Likes"].map((label) => (
+            {["Posts", "Lists"].map((label) => (
               <button
                 key={label}
                 type="button"
+                onClick={() => setActiveTab(label)}
                 className={`px-3 sm:px-4 py-1.5 sm:py-2 rounded-full text-xs sm:text-sm border transition ${
-                  label === "Posts"
+                  label === activeTab
                     ? "bg-cyan-500 text-slate-950 border-cyan-400"
                     : "border-slate-800 text-slate-300 hover:border-slate-600"
                 }`}
@@ -410,7 +448,8 @@ function DashboardPage() {
           </div>
         </div>
 
-        <section className="p-0">
+        {activeTab === "Posts" && (
+          <section className="p-0">
           <div className="max-w-2xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
             <div>
               <h2 className="text-base sm:text-lg font-semibold">Posts</h2>
@@ -858,6 +897,80 @@ function DashboardPage() {
             </div>
           )}
         </section>
+        )}
+
+        {activeTab === "Lists" && (
+          <section className="mt-6 max-w-5xl mx-auto">
+            <div className="flex items-center justify-between gap-3" />
+            {listsLoading ? (
+              <div className="mt-6 text-sm text-slate-400">Loading lists...</div>
+            ) : lists.length === 0 ? (
+              <div className="mt-6 rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center text-sm text-slate-400">
+                No public lists yet.
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {lists.map((list) => {
+                  const posters = (list.movies || [])
+                    .map((movie) =>
+                      movie.poster_path
+                        ? `${POSTER_BASE}${movie.poster_path}`
+                        : ""
+                    )
+                    .filter(Boolean)
+                    .slice(0, 3);
+                  const offsets = [
+                    "left-0 -rotate-6",
+                    "left-5 rotate-0",
+                    "left-10 rotate-6",
+                  ];
+                  return (
+                    <button
+                      key={list.id}
+                      type="button"
+                      onClick={() => {
+                        if (!list.shareCode) return;
+                        window.location.hash = `#list?code=${list.shareCode}`;
+                      }}
+                      className="p-3 w-full max-w-[340px] justify-self-start text-left hover:opacity-90 transition"
+                    >
+                      <div className="relative h-40 w-44">
+                        {posters.length === 0 ? (
+                          <div className="h-40 w-24 rounded-lg border border-dashed border-slate-700 bg-slate-900/40 flex items-center justify-center text-sm text-slate-500">
+                            No posters
+                          </div>
+                        ) : (
+                          posters.map((poster, index) => (
+                            <div
+                              key={`${list.id}-poster-${index}`}
+                              className={`absolute top-0 ${offsets[index] || "left-10"} h-40 w-24 rounded-lg border border-slate-800 bg-slate-900/70 shadow-lg overflow-hidden`}
+                              style={{ zIndex: index + 1 }}
+                            >
+                              <img
+                                src={poster}
+                                alt={list.name}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                            </div>
+                          ))
+                        )}
+                      </div>
+                      <div className="mt-3">
+                        <div className="text-lg font-semibold text-slate-100">
+                          {list.name}
+                        </div>
+                        <div className="text-base text-slate-400 mt-1">
+                          {list.movies?.length || 0} items
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
       </main>
       {coverModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">

@@ -6,6 +6,7 @@ import {
   createList,
   addMovieToList,
   updateListName,
+  updateListVisibility,
   deleteList,
   getLists,
   removeMovieFromList,
@@ -112,6 +113,13 @@ function AccountPage({ initialTab = "rooms" }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiSaving, setAiSaving] = useState(false);
+  const [listMenuOpenId, setListMenuOpenId] = useState("");
+  const [activeListMenuOpen, setActiveListMenuOpen] = useState(false);
+  const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
+  const [visibilityList, setVisibilityList] = useState(null);
+  const [visibilityValue, setVisibilityValue] = useState(true);
+  const [visibilitySaving, setVisibilitySaving] = useState(false);
+  const [visibilityError, setVisibilityError] = useState("");
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importCode, setImportCode] = useState("");
   const [importError, setImportError] = useState("");
@@ -623,6 +631,38 @@ function AccountPage({ initialTab = "rooms" }) {
     } catch (err) {
       setRoomsError("Network error. Please try again.");
     }
+  };
+
+  const handleOpenVisibilityModal = (list) => {
+    if (!list) return;
+    setVisibilityList(list);
+    setVisibilityValue(list.public !== false);
+    setVisibilityError("");
+    setVisibilityModalOpen(true);
+  };
+
+  const handleSaveVisibility = async () => {
+    if (!visibilityList || visibilitySaving) return;
+    setVisibilitySaving(true);
+    setVisibilityError("");
+    const result = await updateListVisibility(
+      visibilityList.id,
+      visibilityValue
+    );
+    if (result?.error) {
+      setVisibilityError(result.error);
+      setVisibilitySaving(false);
+      return;
+    }
+    setLists((prev) =>
+      prev.map((list) =>
+        list.id === visibilityList.id
+          ? { ...list, public: result?.list?.public !== false }
+          : list
+      )
+    );
+    setVisibilitySaving(false);
+    setVisibilityModalOpen(false);
   };
 
   const handleCoverClear = () => {
@@ -1459,22 +1499,77 @@ function AccountPage({ initialTab = "rooms" }) {
                       </div>
                       <div className="max-h-[360px] overflow-y-auto space-y-2 pr-1">
                         {lists.map((list) => (
-                          <button
+                          <div
                             key={list.id}
-                            type="button"
-                            onClick={() => setActiveListId(list.id)}
-                            className={`w-full text-left rounded-xl border px-3 py-3 transition ${activeListId === list.id
+                            className={`relative w-full rounded-xl border px-3 py-3 transition ${activeListId === list.id
                               ? "border-cyan-400 bg-cyan-500/10 text-slate-100"
                               : "border-slate-800 bg-slate-900/60 text-slate-300 hover:border-slate-600"
                               }`}
                           >
-                            <div className="text-sm font-semibold">
-                              {list.name}
+                            <button
+                              type="button"
+                              onClick={() => setActiveListId(list.id)}
+                              className="w-full text-left"
+                            >
+                              <div className="text-sm font-semibold">
+                                {list.name}
+                              </div>
+                              <div className="text-xs text-slate-400 mt-1">
+                                {list.movies?.length || 0} movies
+                              </div>
+                            </button>
+                            <div className="absolute right-2 top-2">
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  setListMenuOpenId((prev) =>
+                                    prev === list.id ? "" : list.id
+                                  );
+                                }}
+                                className="rounded-full border border-slate-700/80 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
+                                aria-label="List options"
+                              >
+                                ⋮
+                              </button>
+                              {listMenuOpenId === list.id && (
+                                <div className="absolute right-0 mt-2 w-36 rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl z-10">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveListId(list.id);
+                                      setRenameOpen(true);
+                                      setRenameValue(list.name);
+                                      setListMenuOpenId("");
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
+                                  >
+                                    Rename
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setListMenuOpenId("");
+                                      handleOpenVisibilityModal(list);
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
+                                  >
+                                    Visibility
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setListMenuOpenId("");
+                                      handleDeleteList(list.id);
+                                    }}
+                                    className="w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-rose-500/10 transition"
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              )}
                             </div>
-                            <div className="text-xs text-slate-400 mt-1">
-                              {list.movies?.length || 0} movies
-                            </div>
-                          </button>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -1578,24 +1673,56 @@ function AccountPage({ initialTab = "rooms" }) {
                                 </button>
                               )}
                               {!renameOpen && (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setRenameOpen(true);
-                                  setRenameValue(activeList.name);
-                                }}
-                                className="px-3 py-1.5 rounded-lg border border-slate-700 text-xs text-slate-200 hover:border-slate-500 transition"
-                              >
-                                Rename
-                              </button>
-                            )}
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteList(activeList.id)}
-                                className="px-3 py-1.5 rounded-lg border border-rose-500/50 text-xs text-rose-100 hover:bg-rose-500/10 transition"
-                              >
-                                {activeList.isOwner ? "Delete list" : "Remove from my lists"}
-                              </button>
+                                <div className="relative">
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setActiveListMenuOpen((prev) => !prev)
+                                    }
+                                    className="rounded-full border border-slate-700/80 px-2.5 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
+                                    aria-label="List actions"
+                                  >
+                                    ⋮
+                                  </button>
+                                  {activeListMenuOpen && (
+                                    <div className="absolute right-0 mt-2 w-40 rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl z-10">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setRenameOpen(true);
+                                          setRenameValue(activeList.name);
+                                          setActiveListMenuOpen(false);
+                                        }}
+                                        className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
+                                      >
+                                        Rename
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveListMenuOpen(false);
+                                          handleOpenVisibilityModal(activeList);
+                                        }}
+                                        className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
+                                      >
+                                        Visibility
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveListMenuOpen(false);
+                                          handleDeleteList(activeList.id);
+                                        }}
+                                        className="w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-rose-500/10 transition"
+                                      >
+                                        {activeList.isOwner
+                                          ? "Delete list"
+                                          : "Remove from my lists"}
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                           </div>
                         </div>
                           {false && shareMessage && (
@@ -2425,6 +2552,78 @@ function AccountPage({ initialTab = "rooms" }) {
                   Processing...
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {visibilityModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+            <div
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+              onClick={() => setVisibilityModalOpen(false)}
+              role="presentation"
+            />
+            <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <h3 className="text-lg font-semibold">List visibility</h3>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Choose whether this list is public or private.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setVisibilityModalOpen(false)}
+                  className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="mt-6 flex items-center justify-between gap-4">
+                <div>
+                  <div className="text-sm font-semibold text-slate-100">
+                    Public list
+                  </div>
+                  <div className="text-xs text-slate-400 mt-1">
+                    Anyone with your profile can see this list.
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setVisibilityValue((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition ${
+                    visibilityValue ? "bg-cyan-500" : "bg-slate-700"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-5 w-5 transform rounded-full bg-white transition ${
+                      visibilityValue ? "translate-x-5" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+              {visibilityError && (
+                <div className="mt-3 text-xs text-rose-300">
+                  {visibilityError}
+                </div>
+              )}
+              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setVisibilityModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveVisibility}
+                  disabled={visibilitySaving}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition disabled:opacity-60"
+                >
+                  {visibilitySaving ? "Saving..." : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         )}
