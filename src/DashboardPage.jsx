@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
+import { AuthModal } from "./BrowsePage.jsx";
 
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
@@ -111,14 +112,23 @@ const fetchKlipySearch = async (query, signal) => {
   return normalizeKlipyGifs(data);
 };
 
-function DashboardPage() {
+function DashboardPage({ userId = null }) {
   const [activeTab, setActiveTab] = useState("Posts");
   const [user, setUser] = useState({
+    id: null,
     username: "",
     avatar: "",
     bio: "",
     cover: "",
   });
+  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [viewingUserId, setViewingUserId] = useState(
+    userId ? Number(userId) : null
+  );
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authMode, setAuthMode] = useState("signin");
   const [loading, setLoading] = useState(true);
   const [coverSource, setCoverSource] = useState("");
   const [coverFileType, setCoverFileType] = useState("");
@@ -132,49 +142,135 @@ function DashboardPage() {
   const [lists, setLists] = useState([]);
   const [listsLoading, setListsLoading] = useState(false);
 
+  const fetchCurrentUser = async (activeFlag = { active: true }) => {
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/me`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        if (activeFlag.active) {
+          setLoading(false);
+        }
+        return null;
+      }
+      const data = await response.json().catch(() => ({}));
+      if (!activeFlag.active) return null;
+      const me = data?.user || null;
+      setCurrentUser(me);
+      if (me?.id) {
+        setCurrentUserId(me.id);
+        if (!userId) {
+          setViewingUserId(me.id);
+          if (!window.location.hash.includes("userId=")) {
+            window.location.hash = `#dashboard?userId=${me.id}`;
+          }
+        }
+      }
+      if (activeFlag.active) {
+        setLoading(false);
+      }
+      return me;
+    } catch (err) {
+      if (activeFlag.active) {
+        setLoading(false);
+      }
+      return null;
+    }
+  };
+
+  useEffect(() => {
+    const activeFlag = { active: true };
+    fetchCurrentUser(activeFlag);
+    return () => {
+      activeFlag.active = false;
+    };
+  }, [userId]);
+
+  useEffect(() => {
+    if (userId) {
+      setViewingUserId(Number(userId));
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    setIsFollowing(false);
+  }, [viewingUserId]);
+
+  const handleRequireAuth = () => {
+    setAuthMode("signin");
+    setShowAuthModal(true);
+  };
+
+  const handleAuthSuccess = async () => {
+    setShowAuthModal(false);
+    const activeFlag = { active: true };
+    await fetchCurrentUser(activeFlag);
+  };
+
+  const isOwner =
+    currentUserId && viewingUserId
+      ? Number(currentUserId) === Number(viewingUserId)
+      : false;
+
   useEffect(() => {
     let active = true;
-    const loadUser = async () => {
-      try {
-        const response = await fetch(`${API_BASE}/api/auth/me`, {
-          credentials: "include",
-        });
-        if (!response.ok) {
-          if (active) {
-            setLoading(false);
-          }
-          return;
-        }
-        const data = await response.json().catch(() => ({}));
+    const loadProfile = async () => {
+      if (!viewingUserId) return;
+      setLoading(true);
+      if (isOwner && currentUser) {
         if (!active) return;
         setUser({
-          username: data?.user?.username || "User",
-          avatar: data?.user?.avatar || "",
-          bio: data?.user?.bio || "",
-          cover: data?.user?.cover || "",
+          id: currentUser.id || null,
+          username: currentUser.username || "User",
+          avatar: currentUser.avatar || "",
+          bio: currentUser.bio || "",
+          cover: currentUser.cover || "",
+        });
+        setLoading(false);
+        return;
+      }
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/users/${viewingUserId}/profile`,
+          { credentials: "include" }
+        );
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data?.message || "Unable to load profile.");
+        }
+        if (!active) return;
+        const profile = data?.user || {};
+        setUser({
+          id: profile.id || null,
+          username: profile.username || "User",
+          avatar: profile.avatar || "",
+          bio: profile.bio || "",
+          cover: profile.cover || "",
         });
       } catch (err) {
+        if (!active) return;
+      } finally {
         if (active) {
           setLoading(false);
         }
-        return;
-      }
-      if (active) {
-        setLoading(false);
       }
     };
-    loadUser();
+    loadProfile();
     return () => {
       active = false;
     };
-  }, []);
+  }, [viewingUserId, isOwner, currentUser]);
 
   useEffect(() => {
     let active = true;
     const loadLists = async () => {
+      if (!viewingUserId) return;
       setListsLoading(true);
       try {
-        const response = await fetch(`${API_BASE}/api/lists`, {
+        const endpoint = isOwner
+          ? `${API_BASE}/api/lists`
+          : `${API_BASE}/api/users/${viewingUserId}/lists`;
+        const response = await fetch(endpoint, {
           credentials: "include",
         });
         const data = await response.json().catch(() => ({}));
@@ -200,13 +296,17 @@ function DashboardPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [viewingUserId, isOwner]);
 
   useEffect(() => {
     let active = true;
     const loadPosts = async () => {
+      if (!viewingUserId) return;
       try {
-        const response = await fetch(`${API_BASE}/api/posts`, {
+        const endpoint = isOwner
+          ? `${API_BASE}/api/posts`
+          : `${API_BASE}/api/users/${viewingUserId}/posts`;
+        const response = await fetch(endpoint, {
           credentials: "include",
         });
         const data = await response.json().catch(() => ({}));
@@ -225,7 +325,7 @@ function DashboardPage() {
     return () => {
       active = false;
     };
-  }, []);
+  }, [viewingUserId, isOwner]);
 
   useEffect(() => {
     return () => {
@@ -370,6 +470,8 @@ function DashboardPage() {
     }
   };
 
+  const mainPaddingClass = isOwner ? "pt-20 sm:pt-24" : "pt-28 sm:pt-32";
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <div
@@ -378,20 +480,22 @@ function DashboardPage() {
       >
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(255,255,255,0.18),_transparent_55%)]" />
         <div className="absolute inset-x-0 bottom-0 h-16 sm:h-20 bg-gradient-to-t from-slate-950 to-transparent" />
-        <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition">
-          <label className="px-4 py-2 rounded-lg bg-slate-950/80 text-slate-100 text-sm border border-slate-700 cursor-pointer hover:border-slate-500 transition">
-            Change cover
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              onChange={handleCoverChange}
-              className="hidden"
-            />
-          </label>
-        </div>
+        {isOwner && (
+          <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition">
+            <label className="px-4 py-2 rounded-lg bg-slate-950/80 text-slate-100 text-sm border border-slate-700 cursor-pointer hover:border-slate-500 transition">
+              Change cover
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                onChange={handleCoverChange}
+                className="hidden"
+              />
+            </label>
+          </div>
+        )}
         <div className="absolute inset-x-0 bottom-0 translate-y-1/3">
           <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col items-center gap-3 sm:gap-6 text-center">
-            <div className="flex flex-col items-center gap-3 sm:gap-4">
+            <div className="flex flex-col items-center gap-3 sm:gap-4 mt-3">
               <div className="h-20 w-20 sm:h-28 sm:w-28 lg:h-32 lg:w-32 rounded-full border-4 border-slate-950 bg-slate-900/80 overflow-hidden flex items-center justify-center text-xl sm:text-2xl font-semibold text-slate-300 shadow-xl">
                 {user.avatar ? (
                   <img
@@ -423,12 +527,33 @@ function DashboardPage() {
                   </div>
                 </div>
               </div>
+              {!isOwner && (
+                <div className="mt-3 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!currentUserId) {
+                        handleRequireAuth();
+                        return;
+                      }
+                      setIsFollowing((prev) => !prev);
+                    }}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                      isFollowing
+                        ? "border border-slate-700 text-slate-100 hover:border-slate-500"
+                        : "bg-cyan-500 text-slate-950 hover:bg-cyan-400"
+                    }`}
+                  >
+                    {isFollowing ? "Following" : "Follow"}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
       </div>
 
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 pt-20 sm:pt-24 pb-12">
+      <main className={`max-w-6xl mx-auto px-4 sm:px-6 ${mainPaddingClass} pb-12`}>
         <div className="sticky top-0 z-20 bg-slate-950/90 backdrop-blur border-b border-slate-900">
           <div className="max-w-2xl mx-auto flex flex-wrap justify-center gap-2 sm:gap-3 py-4 sm:py-3">
             {["Posts", "Lists"].map((label) => (
@@ -450,31 +575,33 @@ function DashboardPage() {
 
         {activeTab === "Posts" && (
           <section className="p-0">
-          <div className="max-w-2xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
-            <div>
-              <h2 className="text-base sm:text-lg font-semibold">Posts</h2>
-              <p className="text-xs sm:text-sm text-slate-400 mt-1">
-                Share updates with your followers.
-              </p>
+          {isOwner && (
+            <div className="max-w-2xl mx-auto flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
+              <div>
+                <h2 className="text-base sm:text-lg font-semibold">Posts</h2>
+                <p className="text-xs sm:text-sm text-slate-400 mt-1">
+                  Share updates with your followers.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setNewPostBody("");
+                  setNewPostGif(null);
+                  setGifOpen(false);
+                  setGifQuery("");
+                  setGifResults([]);
+                  setGifError("");
+                  setCreateModalOpen(true);
+                }}
+                className="w-full sm:w-auto px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+              >
+                New post
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setNewPostBody("");
-                setNewPostGif(null);
-                setGifOpen(false);
-                setGifQuery("");
-                setGifResults([]);
-                setGifError("");
-                setCreateModalOpen(true);
-              }}
-              className="w-full sm:w-auto px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
-            >
-              New post
-            </button>
-          </div>
+          )}
 
-          {postMessage && (
+          {isOwner && postMessage && (
             <div className="max-w-2xl mx-auto mt-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
               {postMessage}
             </div>
@@ -523,7 +650,8 @@ function DashboardPage() {
                         </div>
                       </div>
                     </button>
-                    <div className="relative">
+                    {isOwner && (
+                      <div className="relative">
                     <button
                       type="button"
                       onClick={() =>
@@ -574,9 +702,10 @@ function DashboardPage() {
                           </button>
                         </div>
                       )}
-                    </div>
+                      </div>
+                    )}
                   </div>
-                  {editingPostId === post.id ? (
+                  {isOwner && editingPostId === post.id ? (
                     <div className="mt-3 space-y-3">
                       <textarea
                         value={editingBody}
@@ -828,6 +957,10 @@ function DashboardPage() {
                           type="button"
                           onClick={() => {
                             if (action.label !== "Like") return;
+                            if (!currentUserId) {
+                              handleRequireAuth();
+                              return;
+                            }
                             const nextLiked = !post.liked;
                             setPosts((prev) =>
                               prev.map((item) =>
@@ -1048,7 +1181,7 @@ function DashboardPage() {
         </div>
       )}
 
-      {deletePostId !== null && (
+      {deletePostId !== null && isOwner && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div
             className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
@@ -1095,7 +1228,7 @@ function DashboardPage() {
         </div>
       )}
 
-      {createModalOpen && (
+      {createModalOpen && isOwner && (
         <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
           <div
             className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
@@ -1277,6 +1410,17 @@ function DashboardPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showAuthModal && (
+        <AuthModal
+          mode={authMode}
+          onClose={() => setShowAuthModal(false)}
+          onToggleMode={() =>
+            setAuthMode((prev) => (prev === "signin" ? "signup" : "signin"))
+          }
+          onAuthSuccess={handleAuthSuccess}
+        />
       )}
     </div>
   );

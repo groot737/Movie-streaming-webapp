@@ -923,6 +923,151 @@ export const getAuthApp = () => {
     }
   });
 
+  app.get("/api/users/:userId/profile", async (req, res, next) => {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+    try {
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
+      const result = await pool.query(
+        "SELECT id, username, avatar, bio, cover FROM users WHERE id = $1",
+        [userId]
+      );
+      const user = result.rows[0];
+      if (!user) {
+        return res.status(404).json({ message: "User not found." });
+      }
+      return res.json({
+        user: {
+          id: user.id,
+          username: user.username || "User",
+          avatar: user.avatar || "",
+          bio: user.bio || "",
+          cover: user.cover || "",
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/users/:userId/posts", async (req, res, next) => {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostLikesTable();
+      const viewerId = req.isAuthenticated() ? req.user.id : null;
+      const result = viewerId
+        ? await pool.query(
+            `SELECT posts.id,
+                    posts.user_id,
+                    posts.body,
+                    posts.gif_url,
+                    posts.gif_preview_url,
+                    posts.gif_alt,
+                    posts.created_at,
+                    posts.updated_at,
+                    COALESCE(likes.like_count, 0) AS like_count,
+                    COALESCE(user_likes.is_liked, false) AS liked
+             FROM posts
+             LEFT JOIN (
+               SELECT post_id, COUNT(*)::int AS like_count
+               FROM post_likes
+               GROUP BY post_id
+             ) likes ON likes.post_id = posts.id
+             LEFT JOIN (
+               SELECT post_id, TRUE AS is_liked
+               FROM post_likes
+               WHERE user_id = $2
+             ) user_likes ON user_likes.post_id = posts.id
+             WHERE posts.user_id = $1
+             ORDER BY posts.created_at DESC`,
+            [userId, viewerId]
+          )
+        : await pool.query(
+            `SELECT posts.id,
+                    posts.user_id,
+                    posts.body,
+                    posts.gif_url,
+                    posts.gif_preview_url,
+                    posts.gif_alt,
+                    posts.created_at,
+                    posts.updated_at,
+                    COALESCE(likes.like_count, 0) AS like_count,
+                    FALSE AS liked
+             FROM posts
+             LEFT JOIN (
+               SELECT post_id, COUNT(*)::int AS like_count
+               FROM post_likes
+               GROUP BY post_id
+             ) likes ON likes.post_id = posts.id
+             WHERE posts.user_id = $1
+             ORDER BY posts.created_at DESC`,
+            [userId]
+          );
+      return res.json({ posts: result.rows });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/users/:userId/lists", async (req, res, next) => {
+    const userId = Number(req.params.userId);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ message: "Invalid user id." });
+    }
+    try {
+      await ensureListPublicColumn();
+      const listsResult = await pool.query(
+        `SELECT id, name, share_code, public
+         FROM lists
+         WHERE user_id = $1 AND public = TRUE
+         ORDER BY created_at DESC`,
+        [userId]
+      );
+      const lists = listsResult.rows;
+      if (!lists.length) {
+        return res.json({ lists: [] });
+      }
+      const listIds = lists.map((list) => list.id);
+      const itemsResult = await pool.query(
+        `SELECT list_id, tmdb_id, media_type, title, poster_path, release_date
+         FROM list_items
+         WHERE list_id = ANY($1)
+         ORDER BY created_at DESC`,
+        [listIds]
+      );
+      const itemsByList = new Map();
+      itemsResult.rows.forEach((row) => {
+        if (!itemsByList.has(row.list_id)) {
+          itemsByList.set(row.list_id, []);
+        }
+        itemsByList.get(row.list_id).push({
+          id: row.tmdb_id,
+          mediaType: row.media_type,
+          title: row.title,
+          poster_path: row.poster_path,
+          release_date: row.release_date,
+        });
+      });
+      const payload = lists.map((list) => ({
+        id: list.id,
+        name: list.name,
+        shareCode: list.share_code || "",
+        public: list.public !== false,
+        movies: itemsByList.get(list.id) || [],
+      }));
+      return res.json({ lists: payload });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
   app.post(
     "/api/account/cover",
     requireAuth,

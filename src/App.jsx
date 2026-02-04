@@ -40,7 +40,11 @@ const parseHash = () => {
     return { page: "discover" };
   }
   if (hash.startsWith("#dashboard")) {
-    return { page: "dashboard" };
+    const query = hash.includes("?") ? hash.split("?")[1] : "";
+    const params = new URLSearchParams(query);
+    const userIdParam = params.get("userId") || params.get("id") || "";
+    const userId = userIdParam ? Number(userIdParam) : null;
+    return { page: "dashboard", userId };
   }
   if (hash.startsWith("#room-watch")) {
     const query = hash.includes("?") ? hash.split("?")[1] : "";
@@ -111,7 +115,7 @@ function App() {
   }
 
   if (route.page === "dashboard") {
-    return <DashboardPage />;
+    return <DashboardPage userId={route.userId} />;
   }
 
   if (route.page === "room") {

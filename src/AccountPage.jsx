@@ -140,6 +140,7 @@ function AccountPage({ initialTab = "rooms" }) {
   const [passwordMessage, setPasswordMessage] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [username, setUsername] = useState("");
+  const [accountUserId, setAccountUserId] = useState(null);
   const [bio, setBio] = useState("");
   const [bioError, setBioError] = useState("");
   const [bioMessage, setBioMessage] = useState("");
@@ -184,6 +185,29 @@ function AccountPage({ initialTab = "rooms" }) {
   useEffect(() => {
     setActiveTab(normalizeTab(initialTab));
   }, [initialTab]);
+
+  useEffect(() => {
+    let active = true;
+    const loadAccountId = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: "include",
+        });
+        if (!response.ok) return;
+        const data = await response.json().catch(() => ({}));
+        if (!active) return;
+        if (data?.user?.id) {
+          setAccountUserId(data.user.id);
+        }
+      } catch (err) {
+        // Ignore account id load errors.
+      }
+    };
+    loadAccountId();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (activeTab !== "lists") return;
@@ -1246,6 +1270,32 @@ function AccountPage({ initialTab = "rooms" }) {
     setAiError("");
   };
 
+  const handleOpenDashboard = async () => {
+    if (accountUserId) {
+      window.location.hash = `#dashboard?userId=${accountUserId}`;
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/me`, {
+        credentials: "include",
+      });
+      if (!response.ok) {
+        window.location.hash = "#dashboard";
+        return;
+      }
+      const data = await response.json().catch(() => ({}));
+      const id = data?.user?.id;
+      if (id) {
+        setAccountUserId(id);
+        window.location.hash = `#dashboard?userId=${id}`;
+      } else {
+        window.location.hash = "#dashboard";
+      }
+    } catch (err) {
+      window.location.hash = "#dashboard";
+    }
+  };
+
   const resolvedCoverUrl =
     coverPreview ||
     (coverUrl
@@ -1298,9 +1348,7 @@ function AccountPage({ initialTab = "rooms" }) {
             ))}
             <button
               type="button"
-              onClick={() => {
-                window.location.hash = "#dashboard";
-              }}
+              onClick={handleOpenDashboard}
               className="px-4 py-2 rounded-full text-sm border transition border-slate-800 text-slate-300 hover:border-slate-600"
             >
               Dashboard
