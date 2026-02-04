@@ -133,6 +133,22 @@ function AccountPage({ initialTab = "rooms" }) {
   const [passwordMessage, setPasswordMessage] = useState("");
   const [deleteError, setDeleteError] = useState("");
   const [username, setUsername] = useState("");
+  const [bio, setBio] = useState("");
+  const [bioError, setBioError] = useState("");
+  const [bioMessage, setBioMessage] = useState("");
+  const [coverPreview, setCoverPreview] = useState("");
+  const [coverUrl, setCoverUrl] = useState("");
+  const [coverPendingName, setCoverPendingName] = useState("");
+  const [coverSource, setCoverSource] = useState("");
+  const [coverFileType, setCoverFileType] = useState("");
+  const [coverCrop, setCoverCrop] = useState({ x: 0, y: 0 });
+  const [coverZoom, setCoverZoom] = useState(1);
+  const [coverCroppedArea, setCoverCroppedArea] = useState(null);
+  const [coverModalOpen, setCoverModalOpen] = useState(false);
+  const [coverError, setCoverError] = useState("");
+  const [coverMessage, setCoverMessage] = useState("");
+  const [coverSaving, setCoverSaving] = useState(false);
+  const [coverRemoving, setCoverRemoving] = useState(false);
   const [avatarPreview, setAvatarPreview] = useState("");
   const [avatarName, setAvatarName] = useState("");
   const [avatarError, setAvatarError] = useState("");
@@ -148,6 +164,7 @@ function AccountPage({ initialTab = "rooms" }) {
   const [avatarSaving, setAvatarSaving] = useState(false);
   const [avatarRemoving, setAvatarRemoving] = useState(false);
   const avatarInputRef = useRef(null);
+  const coverInputRef = useRef(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -261,8 +278,14 @@ function AccountPage({ initialTab = "rooms" }) {
         if (data?.user?.username) {
           setUsername(data.user.username);
         }
+        if (typeof data?.user?.bio === "string") {
+          setBio(data.user.bio);
+        }
         if (typeof data?.user?.avatar === "string") {
           setAvatarUrl(data.user.avatar);
+        }
+        if (typeof data?.user?.cover === "string") {
+          setCoverUrl(data.user.cover);
         }
       } catch (err) {
         // Ignore profile load errors.
@@ -281,6 +304,22 @@ function AccountPage({ initialTab = "rooms" }) {
       }
     };
   }, [avatarPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (coverPreview) {
+        URL.revokeObjectURL(coverPreview);
+      }
+    };
+  }, [coverPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (coverSource) {
+        URL.revokeObjectURL(coverSource);
+      }
+    };
+  }, [coverSource]);
 
   useEffect(() => {
     return () => {
@@ -343,6 +382,37 @@ function AccountPage({ initialTab = "rooms" }) {
         setProfileMessage("Username updated.");
       } catch (err) {
         setProfileError("Network error. Please try again.");
+      }
+    };
+    run();
+  };
+
+  const handleBioSubmit = (event) => {
+    event.preventDefault();
+    const trimmed = bio.trim();
+    setBioError("");
+    setBioMessage("");
+    if (trimmed.length > 280) {
+      setBioError("Bio must be 280 characters or less.");
+      return;
+    }
+    const run = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/api/account/bio`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ bio: trimmed }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          setBioError(data?.message || "Unable to update bio.");
+          return;
+        }
+        setBio(data?.user?.bio ?? trimmed);
+        setBioMessage(trimmed ? "Bio updated." : "Bio cleared.");
+      } catch (err) {
+        setBioError("Network error. Please try again.");
       }
     };
     run();
@@ -552,6 +622,136 @@ function AccountPage({ initialTab = "rooms" }) {
       setRoomsMessage("Room deleted.");
     } catch (err) {
       setRoomsError("Network error. Please try again.");
+    }
+  };
+
+  const handleCoverClear = () => {
+    if (coverPreview) {
+      URL.revokeObjectURL(coverPreview);
+    }
+    setCoverPreview("");
+    setCoverPendingName("");
+    if (coverInputRef.current) {
+      coverInputRef.current.value = "";
+    }
+  };
+
+  const handleCoverChange = (event) => {
+    const file = event.target.files?.[0];
+    setCoverError("");
+    setCoverMessage("");
+    if (!file) {
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setCoverError("Please choose a PNG, JPG, or WebP image.");
+      event.target.value = "";
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      setCoverError("Cover image must be 5MB or smaller.");
+      event.target.value = "";
+      return;
+    }
+    if (coverSource) {
+      URL.revokeObjectURL(coverSource);
+    }
+    setCoverSource(URL.createObjectURL(file));
+    setCoverPendingName(file.name);
+    setCoverFileType(file.type);
+    setCoverCrop({ x: 0, y: 0 });
+    setCoverZoom(1);
+    setCoverCroppedArea(null);
+    setCoverModalOpen(true);
+  };
+
+  const handleCoverCancel = () => {
+    if (coverSource) {
+      URL.revokeObjectURL(coverSource);
+    }
+    setCoverSource("");
+    setCoverPendingName("");
+    setCoverFileType("");
+    setCoverCrop({ x: 0, y: 0 });
+    setCoverZoom(1);
+    setCoverCroppedArea(null);
+    setCoverModalOpen(false);
+    if (coverInputRef.current) {
+      coverInputRef.current.value = "";
+    }
+  };
+
+  const handleCoverSave = async () => {
+    if (coverSaving) return;
+    if (!coverSource || !coverCroppedArea) {
+      setCoverError("Adjust the cover image first.");
+      return;
+    }
+    setCoverSaving(true);
+    setCoverError("");
+    setCoverMessage("");
+    try {
+      const croppedBlob = await getCroppedImage(
+        coverSource,
+        coverCroppedArea,
+        coverFileType
+      );
+      if (!croppedBlob) {
+        setCoverError("Unable to prepare cover image.");
+        setCoverSaving(false);
+        return;
+      }
+      const formData = new FormData();
+      const uploadName = coverPendingName || "cover.jpg";
+      formData.append("cover", croppedBlob, uploadName);
+      const response = await fetch(`${API_BASE}/api/account/cover`, {
+        method: "POST",
+        credentials: "include",
+        body: formData,
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setCoverError(data?.message || "Unable to upload cover image.");
+        setCoverSaving(false);
+        return;
+      }
+      setCoverUrl(data?.user?.cover || "");
+      setCoverMessage("Cover updated.");
+      handleCoverCancel();
+    } catch (err) {
+      setCoverError("Network error. Please try again.");
+    } finally {
+      setCoverSaving(false);
+    }
+  };
+
+  const handleCoverRemove = async () => {
+    if (coverRemoving) return;
+    setCoverError("");
+    setCoverMessage("");
+    if (!coverUrl) {
+      handleCoverClear();
+      return;
+    }
+    setCoverRemoving(true);
+    try {
+      const response = await fetch(`${API_BASE}/api/account/cover`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setCoverError(data?.message || "Unable to remove cover image.");
+        setCoverRemoving(false);
+        return;
+      }
+      setCoverUrl("");
+      setCoverMessage("Cover removed.");
+      handleCoverClear();
+    } catch (err) {
+      setCoverError("Network error. Please try again.");
+    } finally {
+      setCoverRemoving(false);
     }
   };
 
@@ -1007,6 +1207,14 @@ function AccountPage({ initialTab = "rooms" }) {
     setAiError("");
   };
 
+  const resolvedCoverUrl =
+    coverPreview ||
+    (coverUrl
+      ? coverUrl.startsWith("http")
+        ? coverUrl
+        : `${API_BASE}${coverUrl}`
+      : "");
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
       <header className="border-b border-slate-900/80 bg-slate-950/70 backdrop-blur sticky top-0 z-40">
@@ -1049,6 +1257,15 @@ function AccountPage({ initialTab = "rooms" }) {
                 {tab.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={() => {
+                window.location.hash = "#dashboard";
+              }}
+              className="px-4 py-2 rounded-full text-sm border transition border-slate-800 text-slate-300 hover:border-slate-600"
+            >
+              Dashboard
+            </button>
           </div>
 
           {activeTab === "rooms" ? (
@@ -1479,6 +1696,72 @@ function AccountPage({ initialTab = "rooms" }) {
             <div className="space-y-6">
               <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
                 <div>
+                  <h2 className="text-xl font-semibold">Cover</h2>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Upload a cover image for your dashboard.
+                  </p>
+                </div>
+                <div className="mt-5 space-y-4">
+                  <div className="relative aspect-[3/1] w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-900/60">
+                    {resolvedCoverUrl ? (
+                      <img
+                        src={resolvedCoverUrl}
+                        alt="Cover preview"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="h-full w-full flex items-center justify-center text-xs text-slate-500">
+                        No cover image
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    ref={coverInputRef}
+                    id="account-cover"
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleCoverChange}
+                    className="hidden"
+                  />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label
+                      htmlFor="account-cover"
+                      className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition cursor-pointer"
+                    >
+                      Upload cover
+                    </label>
+                    {(resolvedCoverUrl || coverSource) && (
+                      <button
+                        type="button"
+                        onClick={handleCoverRemove}
+                        disabled={coverRemoving}
+                        className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                      >
+                        {coverRemoving ? "Removing..." : "Remove cover"}
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    PNG, JPG, or WebP. Max size 5MB. Recommended 1500x500.
+                  </p>
+                  {coverPendingName && (
+                    <div className="text-xs text-slate-300">
+                      Selected: {coverPendingName}
+                    </div>
+                  )}
+                  {coverError && (
+                    <div className="text-xs text-rose-300">{coverError}</div>
+                  )}
+                  {coverMessage && (
+                    <div className="text-xs text-emerald-300">
+                      {coverMessage}
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                <div>
                   <h2 className="text-xl font-semibold">Avatar</h2>
                   <p className="text-sm text-slate-400 mt-1">
                     Upload a profile photo to personalize your account.
@@ -1585,6 +1868,48 @@ function AccountPage({ initialTab = "rooms" }) {
                   {profileMessage && (
                     <div className="text-xs text-emerald-300">
                       {profileMessage}
+                    </div>
+                  )}
+                </form>
+              </section>
+
+              <section className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6">
+                <div>
+                  <h2 className="text-xl font-semibold">Bio</h2>
+                  <p className="text-sm text-slate-400 mt-1">
+                    Share a short intro that shows up on your profile.
+                  </p>
+                </div>
+                <form className="mt-5 space-y-4" onSubmit={handleBioSubmit}>
+                  <div className="space-y-2">
+                    <label className="text-xs text-slate-400" htmlFor="account-bio">
+                      Bio
+                    </label>
+                    <textarea
+                      id="account-bio"
+                      rows={4}
+                      value={bio}
+                      onChange={(event) => setBio(event.target.value)}
+                      maxLength={280}
+                      placeholder="Tell people what you're watching lately..."
+                      className="w-full resize-none rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                    />
+                    <div className="text-[11px] text-slate-500">
+                      {bio.length}/280
+                    </div>
+                  </div>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                  >
+                    Save bio
+                  </button>
+                  {bioError && (
+                    <div className="text-xs text-rose-300">{bioError}</div>
+                  )}
+                  {bioMessage && (
+                    <div className="text-xs text-emerald-300">
+                      {bioMessage}
                     </div>
                   )}
                 </form>
@@ -1778,6 +2103,82 @@ function AccountPage({ initialTab = "rooms" }) {
               </div>
               {avatarError && (
                 <div className="mt-3 text-xs text-rose-300">{avatarError}</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {coverModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={handleCoverCancel}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-4xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Adjust cover</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Drag to frame your cover. Recommended 1500x500.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleCoverCancel}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-5">
+              <div className="relative h-56 sm:h-64 w-full overflow-hidden rounded-2xl border border-slate-800 bg-slate-900">
+                <Cropper
+                  image={coverSource}
+                  crop={coverCrop}
+                  zoom={coverZoom}
+                  aspect={3 / 1}
+                  onCropChange={setCoverCrop}
+                  onZoomChange={setCoverZoom}
+                  onCropComplete={(_, pixels) => setCoverCroppedArea(pixels)}
+                />
+              </div>
+              <div className="mt-5 space-y-2">
+                <label className="text-xs text-slate-400" htmlFor="cover-zoom">
+                  Zoom
+                </label>
+                <input
+                  id="cover-zoom"
+                  type="range"
+                  min={1}
+                  max={3}
+                  step={0.01}
+                  value={coverZoom}
+                  onChange={(event) => setCoverZoom(Number(event.target.value))}
+                  className="w-full accent-cyan-500"
+                />
+              </div>
+              <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={handleCoverCancel}
+                  disabled={coverSaving}
+                  className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCoverSave}
+                  disabled={coverSaving}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                >
+                  {coverSaving ? "Saving..." : "Save"}
+                </button>
+              </div>
+              {coverError && (
+                <div className="mt-3 text-xs text-rose-300">{coverError}</div>
               )}
             </div>
           </div>

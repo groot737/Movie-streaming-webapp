@@ -15,6 +15,8 @@ import { pool } from "./db.js";
 let cachedApp;
 let resetTableReady = false;
 let listCollaboratorsReady = false;
+let userBioColumnReady = false;
+let userCoverColumnReady = false;
 
 const ensureResetTable = async () => {
   if (resetTableReady) {
@@ -53,6 +55,22 @@ const ensureListCollaboratorsTable = async () => {
   listCollaboratorsReady = true;
 };
 
+const ensureUsersBioColumn = async () => {
+  if (userBioColumnReady) {
+    return;
+  }
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS bio TEXT;");
+  userBioColumnReady = true;
+};
+
+const ensureUsersCoverColumn = async () => {
+  if (userCoverColumnReady) {
+    return;
+  }
+  await pool.query("ALTER TABLE users ADD COLUMN IF NOT EXISTS cover TEXT;");
+  userCoverColumnReady = true;
+};
+
 const configurePassport = () => {
   if (passport._strategy("local")) {
     return;
@@ -63,9 +81,11 @@ const configurePassport = () => {
       { usernameField: "email", passwordField: "password" },
       async (email, password, done) => {
         try {
+          await ensureUsersBioColumn();
+          await ensureUsersCoverColumn();
           const normalizedEmail = email.trim().toLowerCase();
           const result = await pool.query(
-            "SELECT id, email, username, avatar, password_hash FROM users WHERE email = $1",
+            "SELECT id, email, username, avatar, bio, cover, password_hash FROM users WHERE email = $1",
             [normalizedEmail]
           );
           const user = result.rows[0];
@@ -81,6 +101,8 @@ const configurePassport = () => {
             email: user.email,
             username: user.username,
             avatar: user.avatar || "",
+            bio: user.bio || "",
+            cover: user.cover || "",
           });
         } catch (err) {
           return done(err);
@@ -95,8 +117,10 @@ const configurePassport = () => {
 
   passport.deserializeUser(async (id, done) => {
     try {
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
       const result = await pool.query(
-        "SELECT id, email, username, avatar FROM users WHERE id = $1",
+        "SELECT id, email, username, avatar, bio, cover FROM users WHERE id = $1",
         [id]
       );
       const user = result.rows[0];
@@ -106,6 +130,8 @@ const configurePassport = () => {
       return done(null, {
         ...user,
         avatar: user.avatar || "",
+        bio: user.bio || "",
+        cover: user.cover || "",
       });
     } catch (err) {
       return done(err);
@@ -256,7 +282,8 @@ export const getAuthApp = () => {
   const b2Endpoint = process.env.B2_ENDPOINT || "";
   const b2Region = process.env.B2_REGION || "us-west-004";
   const b2Public = (process.env.B2_PUBLIC || "true").toLowerCase() === "true";
-  const b2AvatarPrefix = process.env.B2_AVATAR_PREFIX || "avatars";
+  const b2AvatarPrefix = process.env.B2_AVATAR_PREFIX || "Avatars";
+  const b2CoverPrefix = process.env.B2_COVER_PREFIX || "Covers";
 
   const mailer =
     smtpHost && smtpUser && smtpPass
@@ -364,6 +391,20 @@ export const getAuthApp = () => {
     },
   });
 
+  const coverUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 5 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+      if (
+        ["image/jpeg", "image/png", "image/webp"].includes(file.mimetype || "")
+      ) {
+        cb(null, true);
+        return;
+      }
+      cb(new Error("Unsupported file type."));
+    },
+  });
+
   app.post("/api/auth/signup", async (req, res, next) => {
     const { email, password, confirmPassword, username } = req.body || {};
     const normalizedEmail = (email || "").trim().toLowerCase();
@@ -407,6 +448,8 @@ export const getAuthApp = () => {
         return res.status(409).json({ message: "Email is already registered." });
       }
 
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
       const existingUsername = await pool.query(
         "SELECT id FROM users WHERE username = $1",
         [normalizedUsername]
@@ -417,7 +460,7 @@ export const getAuthApp = () => {
 
       const passwordHash = await bcrypt.hash(password, 12);
       const result = await pool.query(
-        "INSERT INTO users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username, avatar",
+        "INSERT INTO users (email, password_hash, username) VALUES ($1, $2, $3) RETURNING id, email, username, avatar, bio, cover",
         [normalizedEmail, passwordHash, normalizedUsername]
       );
       const user = result.rows[0];
@@ -605,6 +648,8 @@ export const getAuthApp = () => {
         .json({ message: "Username must be 32 characters or less." });
     }
     try {
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
       const existingUsername = await pool.query(
         "SELECT id FROM users WHERE username = $1 AND id <> $2",
         [normalizedUsername, req.user.id]
@@ -613,8 +658,157 @@ export const getAuthApp = () => {
         return res.status(409).json({ message: "Username is already taken." });
       }
       const result = await pool.query(
-        "UPDATE users SET username = $1 WHERE id = $2 RETURNING id, email, username, avatar",
+        "UPDATE users SET username = $1 WHERE id = $2 RETURNING id, email, username, avatar, bio, cover",
         [normalizedUsername, req.user.id]
+      );
+      return res.json({ user: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.patch("/api/account/bio", requireAuth, async (req, res, next) => {
+    const bio = (req.body?.bio || "").trim();
+    if (bio.length > 280) {
+      return res
+        .status(400)
+        .json({ message: "Bio must be 280 characters or less." });
+    }
+    try {
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
+      const result = await pool.query(
+        "UPDATE users SET bio = $1 WHERE id = $2 RETURNING id, email, username, avatar, bio, cover",
+        [bio, req.user.id]
+      );
+      return res.json({ user: result.rows[0] });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post(
+    "/api/account/cover",
+    requireAuth,
+    coverUpload.single("cover"),
+    async (req, res, next) => {
+      if (!b2KeyId || !b2Key || !b2Bucket || !b2Endpoint) {
+        return res.status(500).json({ message: "Missing B2 configuration." });
+      }
+      if (!req.file) {
+        return res.status(400).json({ message: "Cover image is required." });
+      }
+      const ext =
+        req.file.mimetype === "image/png"
+          ? "png"
+          : req.file.mimetype === "image/webp"
+            ? "webp"
+            : "jpg";
+      const safePrefix = b2CoverPrefix.replace(/\/+$/, "");
+      const prefixPart = safePrefix ? `${safePrefix}/` : "";
+      const objectKey = `${prefixPart}user-${req.user.id}-${Date.now()}.${ext}`;
+      const s3 = new S3Client({
+        region: b2Region,
+        endpoint: `https://${b2Endpoint}`,
+        credentials: {
+          accessKeyId: b2KeyId,
+          secretAccessKey: b2Key,
+        },
+      });
+      try {
+        await ensureUsersBioColumn();
+        await ensureUsersCoverColumn();
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: b2Bucket,
+            Key: objectKey,
+            Body: req.file.buffer,
+            ContentType: req.file.mimetype,
+            ACL: b2Public ? "public-read" : undefined,
+          })
+        );
+
+        const existing = await pool.query(
+          "SELECT cover FROM users WHERE id = $1",
+          [req.user.id]
+        );
+        const previousCover = existing.rows?.[0]?.cover || "";
+        let previousKey = "";
+        try {
+          if (previousCover) {
+            const url = new URL(previousCover);
+            const rawPath = url.pathname.replace(/^\/+/, "");
+            previousKey = rawPath.startsWith(`${b2Bucket}/`)
+              ? rawPath.slice(b2Bucket.length + 1)
+              : rawPath;
+          }
+        } catch (err) {
+          previousKey = "";
+        }
+        if (previousKey) {
+          await s3.send(
+            new DeleteObjectCommand({
+              Bucket: b2Bucket,
+              Key: previousKey,
+            })
+          );
+        }
+
+        const coverUrl = `https://${b2Endpoint}/${b2Bucket}/${objectKey}`;
+        const result = await pool.query(
+          "UPDATE users SET cover = $1 WHERE id = $2 RETURNING id, email, username, avatar, bio, cover",
+          [coverUrl, req.user.id]
+        );
+        return res.json({ user: result.rows[0] });
+      } catch (err) {
+        return next(err);
+      }
+    }
+  );
+
+  app.delete("/api/account/cover", requireAuth, async (req, res, next) => {
+    if (!b2KeyId || !b2Key || !b2Bucket || !b2Endpoint) {
+      return res.status(500).json({ message: "Missing B2 configuration." });
+    }
+    try {
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
+      const existing = await pool.query(
+        "SELECT cover FROM users WHERE id = $1",
+        [req.user.id]
+      );
+      const previousCover = existing.rows?.[0]?.cover || "";
+      let previousKey = "";
+      try {
+        if (previousCover) {
+          const url = new URL(previousCover);
+          const rawPath = url.pathname.replace(/^\/+/, "");
+          previousKey = rawPath.startsWith(`${b2Bucket}/`)
+            ? rawPath.slice(b2Bucket.length + 1)
+            : rawPath;
+        }
+      } catch (err) {
+        previousKey = "";
+      }
+      if (previousKey) {
+        const s3 = new S3Client({
+          region: b2Region,
+          endpoint: `https://${b2Endpoint}`,
+          credentials: {
+            accessKeyId: b2KeyId,
+            secretAccessKey: b2Key,
+          },
+        });
+        await s3.send(
+          new DeleteObjectCommand({
+            Bucket: b2Bucket,
+            Key: previousKey,
+          })
+        );
+      }
+      const result = await pool.query(
+        "UPDATE users SET cover = NULL WHERE id = $1 RETURNING id, email, username, avatar, bio, cover",
+        [req.user.id]
       );
       return res.json({ user: result.rows[0] });
     } catch (err) {
@@ -661,8 +855,10 @@ export const getAuthApp = () => {
           })
         );
         const publicUrl = `https://${b2Endpoint}/${b2Bucket}/${objectKey}`;
+        await ensureUsersBioColumn();
+        await ensureUsersCoverColumn();
         const result = await pool.query(
-          "UPDATE users SET avatar = $1 WHERE id = $2 RETURNING id, email, username, avatar",
+          "UPDATE users SET avatar = $1 WHERE id = $2 RETURNING id, email, username, avatar, bio, cover",
           [publicUrl, req.user.id]
         );
         return res.json({ user: result.rows[0] });
@@ -1127,8 +1323,10 @@ export const getAuthApp = () => {
       );
       const avatarUrl = current.rows?.[0]?.avatar || "";
       if (!avatarUrl) {
+        await ensureUsersBioColumn();
+        await ensureUsersCoverColumn();
         const cleared = await pool.query(
-          "UPDATE users SET avatar = NULL WHERE id = $1 RETURNING id, email, username, avatar",
+          "UPDATE users SET avatar = NULL WHERE id = $1 RETURNING id, email, username, avatar, bio, cover",
           [req.user.id]
         );
         return res.json({ user: cleared.rows[0] });
@@ -1159,8 +1357,10 @@ export const getAuthApp = () => {
           })
         );
       }
+      await ensureUsersBioColumn();
+      await ensureUsersCoverColumn();
       const result = await pool.query(
-        "UPDATE users SET avatar = NULL WHERE id = $1 RETURNING id, email, username, avatar",
+        "UPDATE users SET avatar = NULL WHERE id = $1 RETURNING id, email, username, avatar, bio, cover",
         [req.user.id]
       );
       return res.json({ user: result.rows[0] });

@@ -9,6 +9,7 @@ import RoomWatchPage from "./RoomWatchPage.jsx";
 import ResetPasswordPage from "./ResetPasswordPage.jsx";
 import ActorPage from "./ActorPage.jsx";
 import DiscoverPage from "./DiscoverPage.jsx";
+import DashboardPage from "./DashboardPage.jsx";
 
 const parseHash = () => {
   const hash = window.location.hash || "";
@@ -37,6 +38,9 @@ const parseHash = () => {
   }
   if (hash.startsWith("#discover")) {
     return { page: "discover" };
+  }
+  if (hash.startsWith("#dashboard")) {
+    return { page: "dashboard" };
   }
   if (hash.startsWith("#room-watch")) {
     const query = hash.includes("?") ? hash.split("?")[1] : "";
@@ -104,6 +108,10 @@ function App() {
 
   if (route.page === "discover") {
     return <DiscoverPage />;
+  }
+
+  if (route.page === "dashboard") {
+    return <DashboardPage />;
   }
 
   if (route.page === "room") {
