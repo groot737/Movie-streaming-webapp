@@ -9,6 +9,12 @@ const KLIPY_API_KEY =
 const KLIPY_API_BASE = "https://api.klipy.com/api/v1";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 
+const resolveMediaUrl = (src) => {
+  if (!src) return "";
+  if (src.startsWith("http") || src.startsWith("data:")) return src;
+  return `${API_BASE}${src}`;
+};
+
 const createImage = (url) =>
   new Promise((resolve, reject) => {
     const image = new Image();
@@ -141,6 +147,7 @@ function DashboardPage({ userId = null }) {
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [lists, setLists] = useState([]);
   const [listsLoading, setListsLoading] = useState(false);
+  const [profileNotFound, setProfileNotFound] = useState(false);
 
   const fetchCurrentUser = async (activeFlag = { active: true }) => {
     try {
@@ -217,6 +224,7 @@ function DashboardPage({ userId = null }) {
     const loadProfile = async () => {
       if (!viewingUserId) return;
       setLoading(true);
+      setProfileNotFound(false);
       if (isOwner && currentUser) {
         if (!active) return;
         setUser({
@@ -226,9 +234,11 @@ function DashboardPage({ userId = null }) {
           bio: currentUser.bio || "",
           cover: currentUser.cover || "",
         });
+        setProfileNotFound(false);
         setLoading(false);
         return;
       }
+      let notFound = false;
       try {
         const response = await fetch(
           `${API_BASE}/api/users/${viewingUserId}/profile`,
@@ -236,10 +246,15 @@ function DashboardPage({ userId = null }) {
         );
         const data = await response.json().catch(() => ({}));
         if (!response.ok) {
+          notFound = response.status === 404 || response.status === 400;
           throw new Error(data?.message || "Unable to load profile.");
         }
         if (!active) return;
-        const profile = data?.user || {};
+        const profile = data?.user || null;
+        if (!profile) {
+          notFound = true;
+          return;
+        }
         setUser({
           id: profile.id || null,
           username: profile.username || "User",
@@ -251,6 +266,7 @@ function DashboardPage({ userId = null }) {
         if (!active) return;
       } finally {
         if (active) {
+          setProfileNotFound(notFound);
           setLoading(false);
         }
       }
@@ -379,11 +395,12 @@ function DashboardPage({ userId = null }) {
     return `${diffDays}d`;
   };
 
-  const coverUrl = user.cover
-    ? user.cover.startsWith("http")
-      ? user.cover
-      : `${API_BASE}${user.cover}`
-    : "";
+  const displayName = user.username || "User";
+  const displayBio = loading
+    ? "Loading your profile..."
+    : user.bio || (isOwner ? "No bio yet. Add one in settings." : "No bio yet.");
+  const displayAvatarUrl = resolveMediaUrl(user.avatar);
+  const coverUrl = resolveMediaUrl(user.cover);
 
   const handleCoverChange = (event) => {
     const file = event.target.files?.[0];
@@ -470,6 +487,16 @@ function DashboardPage({ userId = null }) {
     }
   };
 
+  if (profileNotFound) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-4">
+        <div className="text-center">
+          <div className="text-2xl font-semibold">Page not found</div>
+        </div>
+      </div>
+    );
+  }
+
   const mainPaddingClass = isOwner ? "pt-20 sm:pt-24" : "pt-28 sm:pt-32";
 
   return (
@@ -497,24 +524,22 @@ function DashboardPage({ userId = null }) {
           <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col items-center gap-3 sm:gap-6 text-center">
             <div className="flex flex-col items-center gap-3 sm:gap-4 mt-3">
               <div className="h-20 w-20 sm:h-28 sm:w-28 lg:h-32 lg:w-32 rounded-full border-4 border-slate-950 bg-slate-900/80 overflow-hidden flex items-center justify-center text-xl sm:text-2xl font-semibold text-slate-300 shadow-xl">
-                {user.avatar ? (
+                {displayAvatarUrl ? (
                   <img
-                    src={user.avatar}
-                    alt={user.username}
+                    src={displayAvatarUrl}
+                    alt={displayName}
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  (user.username || "U").slice(0, 1).toUpperCase()
+                  displayName.slice(0, 1).toUpperCase()
                 )}
               </div>
               <div className="space-y-1">
                 <h1 className="text-xl sm:text-2xl lg:text-3xl font-semibold">
-                  {user.username || "User"}
+                  {displayName}
                 </h1>
                 <p className="text-sm sm:text-base text-slate-100/90 font-medium max-w-2xl">
-                  {loading
-                    ? "Loading your profile..."
-                    : user.bio || "No bio yet. Add one in settings."}
+                  {displayBio}
                 </p>
                 <div className="flex flex-wrap items-center justify-center gap-3 text-xs sm:text-sm text-slate-300">
                   <div>
@@ -624,19 +649,19 @@ function DashboardPage({ userId = null }) {
                       title="View post"
                     >
                       <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden border border-slate-800 bg-slate-900/70 flex items-center justify-center text-sm sm:text-base font-semibold text-slate-200">
-                        {user.avatar ? (
+                        {displayAvatarUrl ? (
                           <img
-                            src={user.avatar}
-                            alt={user.username}
+                            src={displayAvatarUrl}
+                            alt={displayName}
                             className="h-full w-full object-cover"
                           />
                         ) : (
-                          (user.username || "U").slice(0, 1).toUpperCase()
+                          displayName.slice(0, 1).toUpperCase()
                         )}
                       </div>
                       <div>
                         <div className="text-sm sm:text-base font-semibold text-slate-100">
-                          {user.username || "User"}
+                          {displayName}
                         </div>
                         <div
                           className="text-[11px] sm:text-xs text-slate-400"
