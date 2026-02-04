@@ -113,7 +113,6 @@ function AccountPage({ initialTab = "rooms" }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState("");
   const [aiSaving, setAiSaving] = useState(false);
-  const [listMenuOpenId, setListMenuOpenId] = useState("");
   const [activeListMenuOpen, setActiveListMenuOpen] = useState(false);
   const [visibilityModalOpen, setVisibilityModalOpen] = useState(false);
   const [visibilityList, setVisibilityList] = useState(null);
@@ -1518,57 +1517,6 @@ function AccountPage({ initialTab = "rooms" }) {
                                 {list.movies?.length || 0} movies
                               </div>
                             </button>
-                            <div className="absolute right-2 top-2">
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  setListMenuOpenId((prev) =>
-                                    prev === list.id ? "" : list.id
-                                  );
-                                }}
-                                className="rounded-full border border-slate-700/80 px-2 py-1 text-xs text-slate-200 hover:border-slate-500 transition"
-                                aria-label="List options"
-                              >
-                                ⋮
-                              </button>
-                              {listMenuOpenId === list.id && (
-                                <div className="absolute right-0 mt-2 w-36 rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl z-10">
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setActiveListId(list.id);
-                                      setRenameOpen(true);
-                                      setRenameValue(list.name);
-                                      setListMenuOpenId("");
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
-                                  >
-                                    Rename
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setListMenuOpenId("");
-                                      handleOpenVisibilityModal(list);
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
-                                  >
-                                    Visibility
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setListMenuOpenId("");
-                                      handleDeleteList(list.id);
-                                    }}
-                                    className="w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-rose-500/10 transition"
-                                  >
-                                    Delete
-                                  </button>
-                                </div>
-                              )}
-                            </div>
                           </div>
                         ))}
                       </div>
