@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import Cropper from "react-easy-crop";
 
 const API_BASE =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_API_URL) || "";
+const KLIPY_API_KEY =
+  (typeof import.meta !== "undefined" && import.meta.env?.VITE_KLIPY_API) || "";
+const KLIPY_API_BASE = "https://api.klipy.com/api/v1";
 
 const createImage = (url) =>
   new Promise((resolve, reject) => {
@@ -40,6 +43,73 @@ const getCroppedImage = async (imageSrc, pixelCrop, fileType) => {
   });
 };
 
+const normalizeKlipyGifs = (payload) => {
+  const items =
+    payload?.data?.data ||
+    payload?.data?.gifs ||
+    payload?.data?.results ||
+    payload?.data ||
+    payload?.results ||
+    payload?.gifs ||
+    [];
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      const url =
+        item?.file?.md?.gif?.url ||
+        item?.file?.hd?.gif?.url ||
+        item?.file?.sm?.gif?.url ||
+        item?.images?.original?.url ||
+        item?.images?.downsized?.url ||
+        item?.media_formats?.gif?.url ||
+        item?.media?.[0]?.gif?.url ||
+        item?.url;
+      const previewUrl =
+        item?.file?.xs?.gif?.url ||
+        item?.file?.sm?.gif?.url ||
+        item?.images?.fixed_width_small?.url ||
+        item?.images?.preview_gif?.url ||
+        item?.media_formats?.tinygif?.url ||
+        url;
+      if (!url) return null;
+      return {
+        id: item?.id || item?.slug || url,
+        url,
+        previewUrl,
+        alt: item?.title || "GIF",
+      };
+    })
+    .filter(Boolean);
+};
+
+const fetchKlipySearch = async (query, signal) => {
+  if (!KLIPY_API_KEY) {
+    throw new Error("Missing Klipy API key.");
+  }
+  const params = new URLSearchParams({
+    q: query,
+    format_filter: "gif",
+  });
+  const res = await fetch(
+    `${KLIPY_API_BASE}/${encodeURIComponent(KLIPY_API_KEY)}/gifs/search?${params.toString()}`,
+    {
+      signal,
+      headers: {
+        Accept: "application/json",
+      },
+    }
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const message = data?.message || `GIF request failed (${res.status}).`;
+    throw new Error(message);
+  }
+  if (data?.error || data?.status === "error") {
+    throw new Error(data?.message || data?.error || "GIF request failed.");
+  }
+  return normalizeKlipyGifs(data);
+};
+
 function DashboardPage() {
   const [user, setUser] = useState({
     username: "",
@@ -56,6 +126,7 @@ function DashboardPage() {
   const [coverModalOpen, setCoverModalOpen] = useState(false);
   const [coverSaving, setCoverSaving] = useState(false);
   const [coverError, setCoverError] = useState("");
+  const [activeMenuId, setActiveMenuId] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -102,13 +173,43 @@ function DashboardPage() {
     };
   }, [coverSource]);
 
-  const posts = [
+  const [posts, setPosts] = useState([
     {
       id: 1,
       body: "Just finished a late-night sci-fi binge. Any recs for tomorrow?",
       time: "1h",
+      likes: 0,
+      liked: false,
     },
-  ];
+  ]);
+  const [postMessage, setPostMessage] = useState("");
+  const [editingPostId, setEditingPostId] = useState(null);
+  const [editingBody, setEditingBody] = useState("");
+  const [deletePostId, setDeletePostId] = useState(null);
+  const [editingGif, setEditingGif] = useState(null);
+  const [editGifOpen, setEditGifOpen] = useState(false);
+  const [editGifQuery, setEditGifQuery] = useState("");
+  const [editGifResults, setEditGifResults] = useState([]);
+  const [editGifLoading, setEditGifLoading] = useState(false);
+  const [editGifError, setEditGifError] = useState("");
+  const editGifAbortRef = useRef(null);
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [newPostBody, setNewPostBody] = useState("");
+  const [gifOpen, setGifOpen] = useState(false);
+  const [gifQuery, setGifQuery] = useState("");
+  const [gifResults, setGifResults] = useState([]);
+  const [gifLoading, setGifLoading] = useState(false);
+  const [gifError, setGifError] = useState("");
+  const [newPostGif, setNewPostGif] = useState(null);
+  const gifAbortRef = useRef(null);
+
+  useEffect(() => {
+    if (!postMessage) return undefined;
+    const timeoutId = setTimeout(() => {
+      setPostMessage("");
+    }, 3000);
+    return () => clearTimeout(timeoutId);
+  }, [postMessage]);
 
   const coverUrl = user.cover
     ? user.cover.startsWith("http")
@@ -288,12 +389,26 @@ function DashboardPage() {
             </div>
             <button
               type="button"
+              onClick={() => {
+                setNewPostBody("");
+                setNewPostGif(null);
+                setGifOpen(false);
+                setGifQuery("");
+                setGifResults([]);
+                setGifError("");
+                setCreateModalOpen(true);
+              }}
               className="w-full sm:w-auto px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
             >
               New post
             </button>
           </div>
 
+          {postMessage && (
+            <div className="max-w-2xl mx-auto mt-4 rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-200">
+              {postMessage}
+            </div>
+          )}
           {posts.length === 0 ? (
             <div className="mt-6 rounded-xl border border-dashed border-slate-800 bg-slate-950/40 p-8 text-center text-sm text-slate-400 max-w-3xl mx-auto">
               No posts yet.
@@ -331,17 +446,231 @@ function DashboardPage() {
                         </div>
                       </div>
                     </button>
+                    <div className="relative">
                     <button
                       type="button"
-                      className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
-                    >
-                      ···
-                    </button>
+                      onClick={() =>
+                        setActiveMenuId((prev) =>
+                          prev === post.id ? null : post.id
+                        )
+                      }
+                        className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+                      >
+                        ···
+                      </button>
+                      {activeMenuId === post.id && (
+                        <div className="absolute right-0 mt-2 w-36 rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl">
+                          <button
+                            type="button"
+                            onClick={() => {
+                            setActiveMenuId(null);
+                            setEditingPostId(post.id);
+                            setEditingBody(post.body);
+                            setEditingGif(post.gif || null);
+                            setEditGifOpen(false);
+                            setEditGifQuery("");
+                            setEditGifResults([]);
+                            setEditGifError("");
+                            setPostMessage("");
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm text-slate-200 hover:bg-slate-900/70 transition"
+                        >
+                            Edit post
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveMenuId(null);
+                              setDeletePostId(post.id);
+                            }}
+                            className="w-full px-3 py-2 text-left text-sm text-rose-300 hover:bg-rose-500/10 transition"
+                          >
+                            Delete post
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-base sm:text-lg text-slate-100 mt-3">{post.body}</p>
-                  <div className="mt-3 border-t border-slate-800 pt-2.5">
+                  {editingPostId === post.id ? (
+                    <div className="mt-3 space-y-3">
+                      <textarea
+                        value={editingBody}
+                        onChange={(event) => setEditingBody(event.target.value)}
+                        rows={3}
+                        className="w-full resize-none rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                      />
+                      {editingGif && (
+                        <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/40">
+                          <img
+                            src={editingGif.previewUrl || editingGif.url}
+                            alt={editingGif.alt || "GIF"}
+                            className="w-full max-h-64 object-contain"
+                          />
+                          <div className="flex justify-end p-2 border-t border-slate-800">
+                            <button
+                              type="button"
+                              onClick={() => setEditingGif(null)}
+                              className="text-xs text-slate-300 hover:text-slate-100 transition"
+                            >
+                              Remove GIF
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setEditGifOpen((prev) => !prev);
+                          setEditGifError("");
+                        }}
+                        className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                      >
+                        {editGifOpen ? "Hide GIFs" : "Change GIF"}
+                      </button>
+                      {editGifOpen && (
+                        <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+                          <form
+                            onSubmit={async (event) => {
+                              event.preventDefault();
+                              const trimmed = editGifQuery.trim();
+                              if (!trimmed) return;
+                              setEditGifLoading(true);
+                              setEditGifError("");
+                              if (editGifAbortRef.current) {
+                                editGifAbortRef.current.abort();
+                              }
+                              const controller = new AbortController();
+                              editGifAbortRef.current = controller;
+                              try {
+                                const results = await fetchKlipySearch(
+                                  trimmed,
+                                  controller.signal
+                                );
+                                setEditGifResults(results);
+                              } catch (err) {
+                                if (err?.name !== "AbortError") {
+                                  setEditGifError(
+                                    err.message || "Unable to load GIFs."
+                                  );
+                                }
+                              } finally {
+                                setEditGifLoading(false);
+                              }
+                            }}
+                            className="flex gap-2"
+                          >
+                            <input
+                              value={editGifQuery}
+                              onChange={(event) =>
+                                setEditGifQuery(event.target.value)
+                              }
+                              placeholder="Search GIFs"
+                              className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                            />
+                            <button
+                              type="submit"
+                              className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 text-sm font-medium hover:bg-cyan-400 transition"
+                            >
+                              Search
+                            </button>
+                          </form>
+                          {editGifLoading ? (
+                            <div className="text-xs text-slate-400">
+                              Loading GIFs...
+                            </div>
+                          ) : editGifError ? (
+                            <div className="text-xs text-rose-300">
+                              {editGifError}
+                            </div>
+                          ) : editGifResults.length === 0 ? (
+                            <div className="text-xs text-slate-400">
+                              No GIFs yet. Try searching for something.
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-3 gap-2 max-h-52 overflow-y-auto pr-1">
+                              {editGifResults.map((gif) => (
+                                <button
+                                  key={gif.id}
+                                  type="button"
+                                  onClick={() => {
+                                    setEditingGif(gif);
+                                    setEditGifOpen(false);
+                                  }}
+                                  className="rounded-lg overflow-hidden border border-slate-800 hover:border-cyan-400/60 transition"
+                                >
+                                  <img
+                                    src={gif.previewUrl || gif.url}
+                                    alt={gif.alt || "GIF"}
+                                    className="w-full h-full object-cover"
+                                    loading="lazy"
+                                  />
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setPosts((prev) =>
+                              prev.map((item) =>
+                                item.id === post.id
+                                  ? {
+                                      ...item,
+                                      body: editingBody.trim() || item.body,
+                                      gif: editingGif || null,
+                                    }
+                                  : item
+                              )
+                            );
+                            setEditingPostId(null);
+                            setEditingBody("");
+                            setEditingGif(null);
+                            setPostMessage("Post updated.");
+                          }}
+                          className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingPostId(null);
+                            setEditingBody("");
+                            setEditingGif(null);
+                          }}
+                          className="px-4 py-2 rounded-lg border border-slate-700 text-slate-100 hover:border-slate-500 transition"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-3 space-y-3">
+                      {post.body && (
+                        <p className="text-base sm:text-lg text-slate-100">
+                          {post.body}
+                        </p>
+                      )}
+                      {post.gif?.url && (
+                        <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/40">
+                          <img
+                            src={post.gif.previewUrl || post.gif.url}
+                            alt={post.gif.alt || "GIF"}
+                            className="w-full max-h-64 object-contain"
+                            loading="lazy"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                    <div className="mt-3 border-t border-slate-800 pt-2.5">
                     <div className="flex items-center justify-between text-[11px] sm:text-xs text-slate-400">
-                      <div>0 likes</div>
+                      <div>
+                        {post.likes || 0} {post.likes === 1 ? "like" : "likes"}
+                      </div>
                       <div>0 comments</div>
                     </div>
                     <div className="mt-2.5 flex items-center justify-between text-xs sm:text-sm text-slate-300">
@@ -401,7 +730,25 @@ function DashboardPage() {
                         <button
                           key={action.label}
                           type="button"
-                          className="w-full rounded-lg py-1.5 hover:bg-slate-900/60 transition flex items-center justify-center gap-1.5 sm:gap-2 hover:text-cyan-300"
+                          onClick={() => {
+                            if (action.label !== "Like") return;
+                            setPosts((prev) =>
+                              prev.map((item) => {
+                                if (item.id !== post.id) return item;
+                                const liked = !item.liked;
+                                const likes = Math.max(
+                                  0,
+                                  (item.likes || 0) + (liked ? 1 : -1)
+                                );
+                                return { ...item, liked, likes };
+                              })
+                            );
+                          }}
+                          className={`w-full rounded-lg py-1.5 hover:bg-slate-900/60 transition flex items-center justify-center gap-1.5 sm:gap-2 ${
+                            action.label === "Like" && post.liked
+                              ? "text-cyan-300"
+                              : "hover:text-cyan-300"
+                          }`}
                         >
                           {action.icon}
                           {action.label}
@@ -486,6 +833,224 @@ function DashboardPage() {
               {coverError && (
                 <div className="mt-3 text-xs text-rose-300">{coverError}</div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deletePostId !== null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={() => setDeletePostId(null)}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="text-lg font-semibold">Delete post?</div>
+            <p className="text-sm text-slate-400 mt-2">
+              This action cannot be undone.
+            </p>
+            <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setDeletePostId(null)}
+                className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPosts((prev) =>
+                    prev.filter((item) => item.id !== deletePostId)
+                  );
+                  setDeletePostId(null);
+                  setPostMessage("Post deleted.");
+                }}
+                className="px-4 py-2 rounded-lg bg-rose-500 text-white font-medium hover:bg-rose-400 transition"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {createModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={() => setCreateModalOpen(false)}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-xl max-h-[80vh] overflow-y-auto rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Create post</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Share an update with your followers.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(false)}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-5 space-y-4">
+              <textarea
+                value={newPostBody}
+                onChange={(event) => setNewPostBody(event.target.value)}
+                rows={4}
+                placeholder="What's on your mind?"
+                className="w-full resize-none rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              />
+              {newPostGif && (
+                <div className="rounded-xl border border-slate-800 overflow-hidden bg-slate-900/40">
+                  <img
+                    src={newPostGif.previewUrl || newPostGif.url}
+                    alt={newPostGif.alt || "GIF"}
+                    className="w-full max-h-64 object-contain"
+                  />
+                  <div className="flex justify-end p-2 border-t border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => setNewPostGif(null)}
+                      className="text-xs text-slate-300 hover:text-slate-100 transition"
+                    >
+                      Remove GIF
+                    </button>
+                  </div>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setGifOpen((prev) => !prev);
+                  setGifError("");
+                }}
+                className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+              >
+                {gifOpen ? "Hide GIFs" : "Add GIF"}
+              </button>
+              {gifOpen && (
+                <div className="space-y-3 rounded-xl border border-slate-800 bg-slate-900/40 p-4">
+                  <form
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      const trimmed = gifQuery.trim();
+                      if (!trimmed) return;
+                      setGifLoading(true);
+                      setGifError("");
+                      if (gifAbortRef.current) {
+                        gifAbortRef.current.abort();
+                      }
+                      const controller = new AbortController();
+                      gifAbortRef.current = controller;
+                      try {
+                        const results = await fetchKlipySearch(
+                          trimmed,
+                          controller.signal
+                        );
+                        setGifResults(results);
+                      } catch (err) {
+                        if (err?.name !== "AbortError") {
+                          setGifError(err.message || "Unable to load GIFs.");
+                        }
+                      } finally {
+                        setGifLoading(false);
+                      }
+                    }}
+                    className="flex gap-2"
+                  >
+                    <input
+                      value={gifQuery}
+                      onChange={(event) => setGifQuery(event.target.value)}
+                      placeholder="Search GIFs"
+                      className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                    />
+                    <button
+                      type="submit"
+                      className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 text-sm font-medium hover:bg-cyan-400 transition"
+                    >
+                      Search
+                    </button>
+                  </form>
+                  {gifLoading ? (
+                    <div className="text-xs text-slate-400">Loading GIFs...</div>
+                  ) : gifError ? (
+                    <div className="text-xs text-rose-300">{gifError}</div>
+                  ) : gifResults.length === 0 ? (
+                    <div className="text-xs text-slate-400">
+                      No GIFs yet. Try searching for something.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2 max-h-52 overflow-y-auto pr-1">
+                      {gifResults.map((gif) => (
+                        <button
+                          key={gif.id}
+                          type="button"
+                          onClick={() => {
+                            setNewPostGif(gif);
+                            setGifOpen(false);
+                          }}
+                          className="rounded-lg overflow-hidden border border-slate-800 hover:border-cyan-400/60 transition"
+                        >
+                          <img
+                            src={gif.previewUrl || gif.url}
+                            alt={gif.alt || "GIF"}
+                            className="w-full h-full object-cover"
+                            loading="lazy"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <div>{newPostBody.trim().length}/280</div>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setCreateModalOpen(false)}
+                  className="px-4 py-2 rounded-lg border border-slate-700 text-sm text-slate-200 hover:border-slate-500 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const trimmed = newPostBody.trim();
+                    if (!trimmed && !newPostGif) return;
+                    setPosts((prev) => [
+                      {
+                        id: Date.now(),
+                        body: trimmed,
+                        time: "Just now",
+                        gif: newPostGif || null,
+                        likes: 0,
+                        liked: false,
+                      },
+                      ...prev,
+                    ]);
+                    setCreateModalOpen(false);
+                    setNewPostBody("");
+                    setNewPostGif(null);
+                    setGifOpen(false);
+                    setGifQuery("");
+                    setGifResults([]);
+                    setGifError("");
+                    setPostMessage("Post created.");
+                  }}
+                  className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 transition"
+                >
+                  Post
+                </button>
+              </div>
             </div>
           </div>
         </div>
