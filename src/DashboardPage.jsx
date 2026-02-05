@@ -836,6 +836,7 @@ function DashboardPage({ userId = null }) {
 
   const renderCommentThread = (comment, depth = 0, postId, isPostOwner) => {
     const authorName = comment.author?.name || "User";
+    const authorId = comment.author?.id;
     const authorAvatar = resolveMediaUrl(comment.author?.avatar);
     const likeCount = comment.likes || 0;
     const hasReplies = (comment.replies || []).length > 0;
@@ -885,9 +886,21 @@ function DashboardPage({ userId = null }) {
           <div className="flex-1 min-w-0">
             <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                <span className="font-semibold text-slate-100">
-                  {authorName}
-                </span>
+                {authorId ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      window.location.hash = `#dashboard?userId=${authorId}`;
+                    }}
+                    className="font-semibold text-slate-100 hover:text-cyan-300 transition"
+                  >
+                    {authorName}
+                  </button>
+                ) : (
+                  <span className="font-semibold text-slate-100">
+                    {authorName}
+                  </span>
+                )}
                 <span>{comment.time}</span>
               </div>
               {isEditing ? (
