@@ -19,6 +19,8 @@ let userBioColumnReady = false;
 let userCoverColumnReady = false;
 let postsTableReady = false;
 let postLikesTableReady = false;
+let postCommentsTableReady = false;
+let postCommentLikesTableReady = false;
 let listPublicColumnReady = false;
 
 const ensureResetTable = async () => {
@@ -115,6 +117,55 @@ const ensurePostLikesTable = async () => {
     "CREATE INDEX IF NOT EXISTS post_likes_user_id_idx ON post_likes(user_id);"
   );
   postLikesTableReady = true;
+};
+
+const ensurePostCommentsTable = async () => {
+  if (postCommentsTableReady) {
+    return;
+  }
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS post_comments (
+      id SERIAL PRIMARY KEY,
+      post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      parent_comment_id INTEGER REFERENCES post_comments(id) ON DELETE CASCADE,
+      body TEXT,
+      gif_url TEXT,
+      gif_preview_url TEXT,
+      gif_alt TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      deleted_at TIMESTAMPTZ
+    );`
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS post_comments_post_id_idx ON post_comments(post_id, created_at);"
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS post_comments_parent_id_idx ON post_comments(parent_comment_id);"
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS post_comments_user_id_idx ON post_comments(user_id);"
+  );
+  postCommentsTableReady = true;
+};
+
+const ensurePostCommentLikesTable = async () => {
+  if (postCommentLikesTableReady) {
+    return;
+  }
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS post_comment_likes (
+      comment_id INTEGER NOT NULL REFERENCES post_comments(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (comment_id, user_id)
+    );`
+  );
+  await pool.query(
+    "CREATE INDEX IF NOT EXISTS post_comment_likes_user_id_idx ON post_comment_likes(user_id);"
+  );
+  postCommentLikesTableReady = true;
 };
 
 const ensureListPublicColumn = async () => {
@@ -913,6 +964,237 @@ export const getAuthApp = () => {
       const likes = await pool.query(
         "SELECT COUNT(*)::int AS like_count FROM post_likes WHERE post_id = $1",
         [postId]
+      );
+      return res.json({
+        liked: desiredLiked,
+        like_count: likes.rows?.[0]?.like_count || 0,
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/posts/:postId/comments", async (req, res, next) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isFinite(postId)) {
+      return res.status(400).json({ message: "Invalid post id." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostCommentsTable();
+      await ensurePostCommentLikesTable();
+      const userId = req.user?.id || null;
+      const result = await pool.query(
+        `SELECT c.id,
+                c.post_id,
+                c.user_id,
+                c.parent_comment_id,
+                c.body,
+                c.gif_url,
+                c.gif_preview_url,
+                c.gif_alt,
+                c.created_at,
+                c.updated_at,
+                u.username,
+                u.avatar,
+                COALESCE(likes.like_count, 0) AS like_count,
+                COALESCE(user_likes.is_liked, false) AS liked
+         FROM post_comments c
+         JOIN users u ON u.id = c.user_id
+         LEFT JOIN (
+           SELECT comment_id, COUNT(*)::int AS like_count
+           FROM post_comment_likes
+           GROUP BY comment_id
+         ) likes ON likes.comment_id = c.id
+         LEFT JOIN (
+           SELECT comment_id, TRUE AS is_liked
+           FROM post_comment_likes
+           WHERE user_id = $2
+         ) user_likes ON user_likes.comment_id = c.id
+         WHERE c.post_id = $1 AND c.deleted_at IS NULL
+         ORDER BY c.created_at ASC`,
+        [postId, userId]
+      );
+      return res.json({ comments: result.rows });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/posts/:postId/comments", requireAuth, async (req, res, next) => {
+    const postId = Number(req.params.postId);
+    if (!Number.isFinite(postId)) {
+      return res.status(400).json({ message: "Invalid post id." });
+    }
+    const body = (req.body?.body || "").trim();
+    const gif = req.body?.gif || null;
+    const gifUrl = gif?.url || null;
+    const gifPreviewUrl = gif?.previewUrl || null;
+    const gifAlt = gif?.alt || null;
+    const parentCommentId = Number(req.body?.parentCommentId) || null;
+    if (!body && !gifUrl) {
+      return res.status(400).json({ message: "Comment content is required." });
+    }
+    if (body.length > 500) {
+      return res
+        .status(400)
+        .json({ message: "Comment must be 500 characters or less." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostCommentsTable();
+      await ensurePostCommentLikesTable();
+      if (parentCommentId) {
+        const parent = await pool.query(
+          `SELECT id FROM post_comments
+           WHERE id = $1 AND post_id = $2 AND deleted_at IS NULL`,
+          [parentCommentId, postId]
+        );
+        if (!parent.rows.length) {
+          return res.status(404).json({ message: "Parent comment not found." });
+        }
+      }
+      const result = await pool.query(
+        `INSERT INTO post_comments
+         (post_id, user_id, parent_comment_id, body, gif_url, gif_preview_url, gif_alt)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, post_id, user_id, parent_comment_id, body, gif_url, gif_preview_url, gif_alt, created_at, updated_at`,
+        [
+          postId,
+          req.user.id,
+          parentCommentId,
+          body || null,
+          gifUrl,
+          gifPreviewUrl,
+          gifAlt,
+        ]
+      );
+      const comment = result.rows[0];
+      return res.status(201).json({
+        comment: {
+          ...comment,
+          username: req.user.username || "User",
+          avatar: req.user.avatar || "",
+          like_count: 0,
+          liked: false,
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.patch("/api/comments/:commentId", requireAuth, async (req, res, next) => {
+    const commentId = Number(req.params.commentId);
+    if (!Number.isFinite(commentId)) {
+      return res.status(400).json({ message: "Invalid comment id." });
+    }
+    const body = (req.body?.body || "").trim();
+    if (!body) {
+      return res.status(400).json({ message: "Comment body is required." });
+    }
+    if (body.length > 500) {
+      return res
+        .status(400)
+        .json({ message: "Comment must be 500 characters or less." });
+    }
+    try {
+      await ensurePostCommentsTable();
+      await ensurePostCommentLikesTable();
+      const existing = await pool.query(
+        "SELECT id, user_id FROM post_comments WHERE id = $1 AND deleted_at IS NULL",
+        [commentId]
+      );
+      const comment = existing.rows[0];
+      if (!comment) {
+        return res.status(404).json({ message: "Comment not found." });
+      }
+      if (comment.user_id !== req.user.id) {
+        return res.status(403).json({ message: "Not allowed." });
+      }
+      const updated = await pool.query(
+        `UPDATE post_comments
+         SET body = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, post_id, user_id, parent_comment_id, body, gif_url, gif_preview_url, gif_alt, created_at, updated_at`,
+        [body, commentId]
+      );
+      const row = updated.rows[0];
+      const likes = await pool.query(
+        "SELECT COUNT(*)::int AS like_count FROM post_comment_likes WHERE comment_id = $1",
+        [commentId]
+      );
+      const liked = await pool.query(
+        "SELECT 1 FROM post_comment_likes WHERE comment_id = $1 AND user_id = $2",
+        [commentId, req.user.id]
+      );
+      return res.json({
+        comment: {
+          ...row,
+          username: req.user.username || "User",
+          avatar: req.user.avatar || "",
+          like_count: likes.rows?.[0]?.like_count || 0,
+          liked: liked.rows.length > 0,
+        },
+      });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.delete("/api/comments/:commentId", requireAuth, async (req, res, next) => {
+    const commentId = Number(req.params.commentId);
+    if (!Number.isFinite(commentId)) {
+      return res.status(400).json({ message: "Invalid comment id." });
+    }
+    try {
+      await ensurePostsTable();
+      await ensurePostCommentsTable();
+      await ensurePostCommentLikesTable();
+      const existing = await pool.query(
+        `SELECT c.id, c.user_id, p.user_id AS post_owner
+         FROM post_comments c
+         JOIN posts p ON p.id = c.post_id
+         WHERE c.id = $1 AND c.deleted_at IS NULL`,
+        [commentId]
+      );
+      const row = existing.rows[0];
+      if (!row) {
+        return res.status(404).json({ message: "Comment not found." });
+      }
+      if (row.user_id !== req.user.id && row.post_owner !== req.user.id) {
+        return res.status(403).json({ message: "Not allowed." });
+      }
+      await pool.query("DELETE FROM post_comments WHERE id = $1", [commentId]);
+      return res.json({ ok: true });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.post("/api/comments/:commentId/like", requireAuth, async (req, res, next) => {
+    const commentId = Number(req.params.commentId);
+    if (!Number.isFinite(commentId)) {
+      return res.status(400).json({ message: "Invalid comment id." });
+    }
+    try {
+      await ensurePostCommentsTable();
+      await ensurePostCommentLikesTable();
+      const desiredLiked = Boolean(req.body?.liked);
+      if (desiredLiked) {
+        await pool.query(
+          "INSERT INTO post_comment_likes (comment_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [commentId, req.user.id]
+        );
+      } else {
+        await pool.query(
+          "DELETE FROM post_comment_likes WHERE comment_id = $1 AND user_id = $2",
+          [commentId, req.user.id]
+        );
+      }
+      const likes = await pool.query(
+        "SELECT COUNT(*)::int AS like_count FROM post_comment_likes WHERE comment_id = $1",
+        [commentId]
       );
       return res.json({
         liked: desiredLiked,

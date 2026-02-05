@@ -8,6 +8,16 @@ const KLIPY_API_KEY =
   (typeof import.meta !== "undefined" && import.meta.env?.VITE_KLIPY_API) || "";
 const KLIPY_API_BASE = "https://api.klipy.com/api/v1";
 const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
+const COMMENT_COLLAPSE_THRESHOLD = 2;
+const REPLY_COLLAPSE_THRESHOLD = 3;
+const COMMENT_BODY_PREVIEW_LIMIT = 220;
+
+const countCommentThreads = (comments = []) =>
+  comments.reduce(
+    (total, comment) =>
+      total + 1 + countCommentThreads(comment.replies || []),
+    0
+  );
 
 const resolveMediaUrl = (src) => {
   if (!src) return "";
@@ -352,6 +362,24 @@ function DashboardPage({ userId = null }) {
   }, [coverSource]);
 
   const [posts, setPosts] = useState([]);
+  const [commentThreadsByPost, setCommentThreadsByPost] = useState({});
+  const [commentDrafts, setCommentDrafts] = useState({});
+  const [commentsExpandedByPost, setCommentsExpandedByPost] = useState({});
+  const [commentListExpandedByPost, setCommentListExpandedByPost] = useState({});
+  const [commentGifByPost, setCommentGifByPost] = useState({});
+  const [replyDrafts, setReplyDrafts] = useState({});
+  const [replyOpenByComment, setReplyOpenByComment] = useState({});
+  const [repliesExpandedByComment, setRepliesExpandedByComment] = useState({});
+  const [replyGifByComment, setReplyGifByComment] = useState({});
+  const [expandedCommentBodyById, setExpandedCommentBodyById] = useState({});
+  const [gifPickerOpen, setGifPickerOpen] = useState(false);
+  const [gifPickerTarget, setGifPickerTarget] = useState(null);
+  const [gifPickerQuery, setGifPickerQuery] = useState("");
+  const [gifPickerResults, setGifPickerResults] = useState([]);
+  const [gifPickerLoading, setGifPickerLoading] = useState(false);
+  const [gifPickerError, setGifPickerError] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentDraft, setEditingCommentDraft] = useState("");
   const [postMessage, setPostMessage] = useState("");
   const [editingPostId, setEditingPostId] = useState(null);
   const [editingBody, setEditingBody] = useState("");
@@ -373,6 +401,53 @@ function DashboardPage({ userId = null }) {
   const [newPostGif, setNewPostGif] = useState(null);
   const gifAbortRef = useRef(null);
   const likeDebounceRef = useRef(new Map());
+  const commentLikeDebounceRef = useRef(new Map());
+  const commentInputRefs = useRef({});
+  const gifPickerAbortRef = useRef(null);
+
+  useEffect(() => {
+    if (posts.length === 0) return undefined;
+    let active = true;
+    const loadComments = async () => {
+      try {
+        const results = await Promise.all(
+          posts.map(async (post) => {
+            const response = await fetch(
+              `${API_BASE}/api/posts/${post.id}/comments`,
+              { credentials: "include" }
+            );
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              return { postId: post.id, comments: [] };
+            }
+            const rawComments = Array.isArray(data?.comments)
+              ? data.comments
+              : [];
+            return {
+              postId: post.id,
+              comments: buildCommentTree(
+                rawComments.map((comment) => mapApiComment(comment))
+              ),
+            };
+          })
+        );
+        if (!active) return;
+        setCommentThreadsByPost((prev) => {
+          const next = { ...prev };
+          results.forEach((result) => {
+            next[result.postId] = result.comments;
+          });
+          return next;
+        });
+      } catch (err) {
+        if (!active) return;
+      }
+    };
+    loadComments();
+    return () => {
+      active = false;
+    };
+  }, [posts]);
 
   useEffect(() => {
     if (!postMessage) return undefined;
@@ -395,12 +470,704 @@ function DashboardPage({ userId = null }) {
     return `${diffDays}d`;
   };
 
+  const mapApiComment = (comment) => ({
+    id: comment.id,
+    parentId: comment.parent_comment_id || null,
+    body: comment.body || "",
+    gif: comment.gif_url
+      ? {
+          url: comment.gif_url,
+          previewUrl: comment.gif_preview_url || comment.gif_url,
+          alt: comment.gif_alt || "GIF",
+        }
+      : null,
+    time: formatPostTime(comment.created_at),
+    createdAt: comment.created_at,
+    author: {
+      id: comment.user_id,
+      name: comment.username || "User",
+      avatar: comment.avatar || "",
+    },
+    likes: typeof comment.like_count === "number" ? comment.like_count : 0,
+    liked: Boolean(comment.liked),
+    replies: [],
+  });
+
+  const buildCommentTree = (comments = []) => {
+    const byId = new Map();
+    comments.forEach((comment) => {
+      byId.set(comment.id, { ...comment, replies: [] });
+    });
+    const roots = [];
+    byId.forEach((comment) => {
+      if (comment.parentId && byId.has(comment.parentId)) {
+        byId.get(comment.parentId).replies.push(comment);
+      } else {
+        roots.push(comment);
+      }
+    });
+    return roots;
+  };
+
+  const handlePostComment = async (postId) => {
+    if (!currentUserId) {
+      handleRequireAuth();
+      return;
+    }
+    const trimmed = (commentDrafts[postId] || "").trim();
+    const selectedGif = commentGifByPost[postId] || null;
+    if (!trimmed && !selectedGif) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/posts/${postId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          body: trimmed,
+          gif: selectedGif || null,
+          parentCommentId: null,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.comment) return;
+      const newComment = mapApiComment(data.comment);
+      setCommentThreadsByPost((prev) => ({
+        ...prev,
+        [postId]: [newComment, ...(prev[postId] || [])],
+      }));
+      setCommentDrafts((prev) => ({ ...prev, [postId]: "" }));
+      setCommentGifByPost((prev) => ({ ...prev, [postId]: null }));
+    } catch (err) {
+      // ignore for now
+    }
+  };
+
+  const insertReply = (comments, parentId, reply) => {
+    let updated = false;
+    const next = comments.map((comment) => {
+      if (comment.id === parentId) {
+        updated = true;
+        return {
+          ...comment,
+          replies: [...(comment.replies || []), reply],
+        };
+      }
+      if (comment.replies?.length) {
+        const [childReplies, childUpdated] = insertReply(
+          comment.replies,
+          parentId,
+          reply
+        );
+        if (childUpdated) {
+          updated = true;
+          return { ...comment, replies: childReplies };
+        }
+      }
+      return comment;
+    });
+    return [updated ? next : comments, updated];
+  };
+
+  const handleReplyComment = async (postId, parentId) => {
+    if (!currentUserId) {
+      handleRequireAuth();
+      return;
+    }
+    const trimmed = (replyDrafts[parentId] || "").trim();
+    const selectedGif = replyGifByComment[parentId] || null;
+    if (!trimmed && !selectedGif) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/posts/${postId}/comments`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          body: trimmed,
+          gif: selectedGif || null,
+          parentCommentId: parentId,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.comment) return;
+      const newReply = mapApiComment(data.comment);
+      setCommentThreadsByPost((prev) => {
+        const current = prev[postId] || [];
+        const [nextThreads, updated] = insertReply(
+          current,
+          parentId,
+          newReply
+        );
+        if (!updated) return prev;
+        return { ...prev, [postId]: nextThreads };
+      });
+      setReplyDrafts((prev) => ({ ...prev, [parentId]: "" }));
+      setReplyOpenByComment((prev) => ({ ...prev, [parentId]: false }));
+      setRepliesExpandedByComment((prev) => ({ ...prev, [parentId]: true }));
+      setReplyGifByComment((prev) => ({ ...prev, [parentId]: null }));
+    } catch (err) {
+      // ignore for now
+    }
+  };
+
+  const openGifPicker = (target) => {
+    setGifPickerTarget(target);
+    setGifPickerOpen(true);
+    setGifPickerQuery("");
+    setGifPickerResults([]);
+    setGifPickerError("");
+    setGifPickerLoading(false);
+    if (gifPickerAbortRef.current) {
+      gifPickerAbortRef.current.abort();
+      gifPickerAbortRef.current = null;
+    }
+  };
+
+  const closeGifPicker = () => {
+    setGifPickerOpen(false);
+    setGifPickerTarget(null);
+    setGifPickerQuery("");
+    setGifPickerResults([]);
+    setGifPickerError("");
+    setGifPickerLoading(false);
+    if (gifPickerAbortRef.current) {
+      gifPickerAbortRef.current.abort();
+      gifPickerAbortRef.current = null;
+    }
+  };
+
+  const updateCommentBody = (comments, targetId, body) => {
+    let updated = false;
+    const next = comments.map((comment) => {
+      if (comment.id === targetId) {
+        updated = true;
+        return {
+          ...comment,
+          body,
+          time: "now",
+        };
+      }
+      if (comment.replies?.length) {
+        const [childReplies, childUpdated] = updateCommentBody(
+          comment.replies,
+          targetId,
+          body
+        );
+        if (childUpdated) {
+          updated = true;
+          return { ...comment, replies: childReplies };
+        }
+      }
+      return comment;
+    });
+    return [updated ? next : comments, updated];
+  };
+
+  const removeCommentThread = (comments, targetId) => {
+    let removed = false;
+    const next = comments
+      .filter((comment) => {
+        if (comment.id === targetId) {
+          removed = true;
+          return false;
+        }
+        return true;
+      })
+      .map((comment) => {
+        if (!comment.replies?.length) return comment;
+        const [childReplies, childRemoved] = removeCommentThread(
+          comment.replies,
+          targetId
+        );
+        if (childRemoved) {
+          removed = true;
+          return { ...comment, replies: childReplies };
+        }
+        return comment;
+      });
+    return [removed ? next : comments, removed];
+  };
+
+  const updateCommentLike = (comments, targetId, liked) => {
+    let updated = false;
+    const next = comments.map((comment) => {
+      if (comment.id === targetId) {
+        updated = true;
+        const currentLikes = comment.likes || 0;
+        return {
+          ...comment,
+          liked,
+          likes: Math.max(0, currentLikes + (liked ? 1 : -1)),
+        };
+      }
+      if (comment.replies?.length) {
+        const [childReplies, childUpdated] = updateCommentLike(
+          comment.replies,
+          targetId,
+          liked
+        );
+        if (childUpdated) {
+          updated = true;
+          return { ...comment, replies: childReplies };
+        }
+      }
+      return comment;
+    });
+    return [updated ? next : comments, updated];
+  };
+
+  const updateCommentLikeWithCount = (comments, targetId, liked, likeCount) => {
+    let updated = false;
+    const next = comments.map((comment) => {
+      if (comment.id === targetId) {
+        updated = true;
+        return {
+          ...comment,
+          liked,
+          likes:
+            typeof likeCount === "number" ? likeCount : comment.likes || 0,
+        };
+      }
+      if (comment.replies?.length) {
+        const [childReplies, childUpdated] = updateCommentLikeWithCount(
+          comment.replies,
+          targetId,
+          liked,
+          likeCount
+        );
+        if (childUpdated) {
+          updated = true;
+          return { ...comment, replies: childReplies };
+        }
+      }
+      return comment;
+    });
+    return [updated ? next : comments, updated];
+  };
+
+  const handleStartEditComment = (comment) => {
+    if (!currentUserId) {
+      handleRequireAuth();
+      return;
+    }
+    setEditingCommentId(comment.id);
+    setEditingCommentDraft(comment.body || "");
+  };
+
+  const handleSaveCommentEdit = async (postId, commentId) => {
+    if (!currentUserId) {
+      handleRequireAuth();
+      return;
+    }
+    const trimmed = editingCommentDraft.trim();
+    if (!trimmed) return;
+    try {
+      const response = await fetch(`${API_BASE}/api/comments/${commentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ body: trimmed }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || !data?.comment) return;
+      const updatedComment = mapApiComment(data.comment);
+      setCommentThreadsByPost((prev) => {
+        const current = prev[postId] || [];
+        const [nextThreads, updated] = updateCommentBody(
+          current,
+          commentId,
+          updatedComment.body
+        );
+        if (!updated) return prev;
+        return { ...prev, [postId]: nextThreads };
+      });
+      setEditingCommentId(null);
+      setEditingCommentDraft("");
+    } catch (err) {
+      // ignore for now
+    }
+  };
+
+  const handleDeleteComment = async (postId, commentId) => {
+    if (!currentUserId) {
+      handleRequireAuth();
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE}/api/comments/${commentId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      if (!response.ok) return;
+      setCommentThreadsByPost((prev) => {
+        const current = prev[postId] || [];
+        const [nextThreads, removed] = removeCommentThread(current, commentId);
+        if (!removed) return prev;
+        return { ...prev, [postId]: nextThreads };
+      });
+      if (editingCommentId === commentId) {
+        setEditingCommentId(null);
+        setEditingCommentDraft("");
+      }
+      setReplyOpenByComment((prev) => {
+        if (!prev[commentId]) return prev;
+        const { [commentId]: _, ...rest } = prev;
+        return rest;
+      });
+      setReplyDrafts((prev) => {
+        if (!prev[commentId]) return prev;
+        const { [commentId]: _, ...rest } = prev;
+        return rest;
+      });
+    } catch (err) {
+      // ignore for now
+    }
+  };
+
+  const isCommentOwner = (comment) => {
+    if (!currentUserId) return false;
+    const authorId = comment.author?.id;
+    if (authorId && currentUserId) {
+      return Number(authorId) === Number(currentUserId);
+    }
+    const name = comment.author?.name;
+    if (currentUser?.username && name === currentUser.username) return true;
+    return name === "You";
+  };
+
+  const renderCommentThread = (comment, depth = 0, postId, isPostOwner) => {
+    const authorName = comment.author?.name || "User";
+    const authorAvatar = resolveMediaUrl(comment.author?.avatar);
+    const likeCount = comment.likes || 0;
+    const hasReplies = (comment.replies || []).length > 0;
+    const replyOpen = !!replyOpenByComment[comment.id];
+    const replyDraft = replyDrafts[comment.id] || "";
+    const isEditing = editingCommentId === comment.id;
+    const canEdit = isCommentOwner(comment);
+    const canDelete = isPostOwner || canEdit;
+    const replyGif = replyGifByComment[comment.id] || null;
+    const commentBody = comment.body || "";
+    const isLongComment = commentBody.length > COMMENT_BODY_PREVIEW_LIMIT;
+    const commentExpanded = !!expandedCommentBodyById[comment.id];
+    const commentPreview = isLongComment
+      ? `${commentBody.slice(0, COMMENT_BODY_PREVIEW_LIMIT)}…`
+      : commentBody;
+    const replyCount = comment.replies?.length || 0;
+    const shouldCollapseReplies = replyCount > REPLY_COLLAPSE_THRESHOLD;
+    const repliesExpanded =
+      repliesExpandedByComment[comment.id] ?? !shouldCollapseReplies;
+    let visibleReplies = [];
+    if (repliesExpanded) {
+      visibleReplies = comment.replies || [];
+    } else if (shouldCollapseReplies) {
+      visibleReplies = (comment.replies || []).slice(
+        0,
+        REPLY_COLLAPSE_THRESHOLD
+      );
+    }
+    const remainingReplyCount = replyCount - visibleReplies.length;
+    return (
+      <div
+        key={comment.id}
+        className={depth > 0 ? "pl-4 border-l border-slate-800" : ""}
+      >
+        <div className="flex gap-3">
+          <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900/70 flex items-center justify-center text-xs font-semibold text-slate-200 overflow-hidden">
+            {authorAvatar ? (
+              <img
+                src={authorAvatar}
+                alt={authorName}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              authorName.slice(0, 1).toUpperCase()
+            )}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
+              <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                <span className="font-semibold text-slate-100">
+                  {authorName}
+                </span>
+                <span>{comment.time}</span>
+              </div>
+              {isEditing ? (
+                <div className="mt-2 space-y-2">
+                  <textarea
+                    value={editingCommentDraft}
+                    onChange={(event) =>
+                      setEditingCommentDraft(event.target.value)
+                    }
+                    rows={2}
+                    className="w-full resize-none rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+                  />
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <button
+                      type="button"
+                      onClick={() => handleSaveCommentEdit(postId, comment.id)}
+                      disabled={!editingCommentDraft.trim()}
+                      className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60 transition"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCommentId(null);
+                        setEditingCommentDraft("");
+                      }}
+                      className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:border-slate-500 transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <p className="mt-1 text-sm text-slate-200 break-all whitespace-pre-wrap">
+                    {commentExpanded ? commentBody : commentPreview}
+                    {isLongComment && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedCommentBodyById((prev) => ({
+                            ...prev,
+                            [comment.id]: !commentExpanded,
+                          }))
+                        }
+                        className="ml-2 inline whitespace-nowrap text-[11px] text-slate-400 hover:text-slate-200 transition align-baseline"
+                      >
+                        {commentExpanded ? "See less" : "See more"}
+                      </button>
+                    )}
+                  </p>
+                </>
+              )}
+              {comment.gif && (
+                <div className="mt-2 max-w-[75%] overflow-hidden rounded-lg mx-auto">
+                  <img
+                    src={comment.gif.previewUrl || comment.gif.url}
+                    alt={comment.gif.alt || "GIF"}
+                    className="w-full max-h-56 object-contain"
+                    loading="lazy"
+                  />
+                </div>
+              )}
+            </div>
+            <div className="mt-1 flex items-center gap-3 text-[11px] text-slate-400">
+              <button
+                type="button"
+                onClick={() =>
+                  setReplyOpenByComment((prev) =>
+                    prev[comment.id] ? {} : { [comment.id]: true }
+                  )
+                }
+                className="hover:text-slate-200 transition"
+              >
+                Reply
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!currentUserId) {
+                    handleRequireAuth();
+                    return;
+                  }
+                  const nextLiked = !comment.liked;
+                  setCommentThreadsByPost((prev) => {
+                    const current = prev[postId] || [];
+                    const [nextThreads, updated] = updateCommentLike(
+                      current,
+                      comment.id,
+                      nextLiked
+                    );
+                    if (!updated) return prev;
+                    return { ...prev, [postId]: nextThreads };
+                  });
+                  const existing = commentLikeDebounceRef.current.get(
+                    comment.id
+                  );
+                  if (existing?.timeoutId) {
+                    clearTimeout(existing.timeoutId);
+                  }
+                  const timeoutId = setTimeout(() => {
+                    fetch(`${API_BASE}/api/comments/${comment.id}/like`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({ liked: nextLiked }),
+                    })
+                      .then((res) => res.json().catch(() => ({})))
+                      .then((data) => {
+                        if (!data) return;
+                        setCommentThreadsByPost((prev) => {
+                          const current = prev[postId] || [];
+                          const [nextThreads, updated] =
+                            updateCommentLikeWithCount(
+                              current,
+                              comment.id,
+                              data?.liked ?? nextLiked,
+                              data?.like_count
+                            );
+                          if (!updated) return prev;
+                          return { ...prev, [postId]: nextThreads };
+                        });
+                      })
+                      .catch(() => {});
+                    commentLikeDebounceRef.current.delete(comment.id);
+                  }, 2000);
+                  commentLikeDebounceRef.current.set(comment.id, {
+                    timeoutId,
+                    liked: nextLiked,
+                  });
+                }}
+                className={`transition ${
+                  comment.liked ? "text-cyan-300" : "hover:text-slate-200"
+                }`}
+              >
+                Like
+              </button>
+              {!isEditing && canEdit && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => handleStartEditComment(comment)}
+                    className="hover:text-slate-200 transition"
+                  >
+                    Edit
+                  </button>
+                </>
+              )}
+              {!isEditing && canDelete && (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteComment(postId, comment.id)}
+                  className="hover:text-rose-300 transition"
+                >
+                  Delete
+                </button>
+              )}
+              {likeCount > 0 && (
+                <span>
+                  {likeCount} {likeCount === 1 ? "like" : "likes"}
+                </span>
+              )}
+            </div>
+            {replyOpen && (
+              <div className="mt-2 rounded-lg border border-slate-800 bg-slate-900/40 p-2">
+                <div className="relative">
+                  <textarea
+                    value={replyDraft}
+                    onChange={(event) =>
+                      setReplyDrafts((prev) => ({
+                        ...prev,
+                        [comment.id]: event.target.value,
+                      }))
+                    }
+                    rows={2}
+                    placeholder={
+                      currentUserId ? "Write a reply..." : "Sign in to reply"
+                    }
+                    disabled={!currentUserId}
+                    className="w-full resize-none rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1 pr-12 pb-8 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 disabled:opacity-60"
+                  />
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openGifPicker({ type: "reply", commentId: comment.id })
+                    }
+                    className="absolute bottom-1.5 right-1.5 px-2 py-0.5 text-[10px] text-slate-300 hover:text-slate-100 transition"
+                  >
+                    GIF
+                  </button>
+                </div>
+                {replyGif && (
+                  <div className="mt-2 max-w-[75%] overflow-hidden rounded-lg mx-auto">
+                    <img
+                      src={replyGif.previewUrl || replyGif.url}
+                      alt={replyGif.alt || "GIF"}
+                      className="w-full max-h-48 object-contain"
+                      loading="lazy"
+                    />
+                    <div className="flex justify-end p-1.5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setReplyGifByComment((prev) => ({
+                            ...prev,
+                            [comment.id]: null,
+                          }))
+                        }
+                        className="text-[11px] text-slate-300 hover:text-slate-100 transition"
+                      >
+                        Remove GIF
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                  <span>
+                    {currentUserId
+                      ? `Replying as ${viewerName}`
+                      : "Sign in to reply."}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleReplyComment(postId, comment.id)}
+                    disabled={
+                      !currentUserId || (!replyDraft.trim() && !replyGif)
+                    }
+                    className="px-2.5 py-1 rounded-full border border-slate-700 text-[11px] text-slate-200 hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60 transition"
+                  >
+                    Reply
+                  </button>
+                </div>
+              </div>
+            )}
+            {hasReplies && (
+              <div className="mt-3 space-y-3">
+                {visibleReplies.length > 0 && (
+                  <div className="space-y-3">
+                    {visibleReplies.map((reply) =>
+                      renderCommentThread(reply, depth + 1, postId, isPostOwner)
+                    )}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setRepliesExpandedByComment((prev) => ({
+                      ...prev,
+                      [comment.id]: !repliesExpanded,
+                    }))
+                  }
+                  className="text-[11px] text-slate-400 hover:text-slate-200 transition"
+                >
+                  {repliesExpanded
+                    ? "Hide replies"
+                    : shouldCollapseReplies
+                      ? `View ${remainingReplyCount} more ${
+                          remainingReplyCount === 1 ? "reply" : "replies"
+                        }`
+                      : `View ${replyCount} ${
+                          replyCount === 1 ? "reply" : "replies"
+                        }`}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const displayName = user.username || "User";
   const displayBio = loading
     ? "Loading your profile..."
     : user.bio || (isOwner ? "No bio yet. Add one in settings." : "No bio yet.");
   const displayAvatarUrl = resolveMediaUrl(user.avatar);
   const coverUrl = resolveMediaUrl(user.cover);
+  const viewerName = currentUser?.username || "Guest";
+  const viewerAvatarUrl = resolveMediaUrl(currentUser?.avatar);
 
   const handleCoverChange = (event) => {
     const file = event.target.files?.[0];
@@ -637,7 +1404,49 @@ function DashboardPage({ userId = null }) {
             </div>
           ) : (
             <div className="mt-6 space-y-4 max-w-2xl mx-auto">
-              {posts.map((post) => (
+              {posts.map((post) => {
+                const comments = commentThreadsByPost[post.id] || [];
+                const commentCount = countCommentThreads(comments);
+                const topLevelCommentCount = comments.length;
+                const commentDraft = commentDrafts[post.id] || "";
+                const commentGif = commentGifByPost[post.id] || null;
+                const commentsVisible = commentsExpandedByPost[post.id] ?? false;
+                const commentListExpanded =
+                  commentListExpandedByPost[post.id] ?? false;
+                const shouldCollapseComments =
+                  topLevelCommentCount > COMMENT_COLLAPSE_THRESHOLD;
+                const visibleComments =
+                  commentListExpanded || !shouldCollapseComments
+                    ? comments
+                    : comments.slice(0, COMMENT_COLLAPSE_THRESHOLD);
+                const remainingCommentCount =
+                  topLevelCommentCount - visibleComments.length;
+                const toggleCommentsVisibility = (shouldFocusInput = false) => {
+                  const nextVisible = !commentsVisible;
+                  setCommentsExpandedByPost((prev) => ({
+                    ...prev,
+                    [post.id]: nextVisible,
+                  }));
+                  if (!nextVisible) {
+                    setCommentListExpandedByPost((prev) => ({
+                      ...prev,
+                      [post.id]: false,
+                    }));
+                  }
+                  if (nextVisible && shouldFocusInput) {
+                    setTimeout(() => {
+                      const input = commentInputRefs.current[post.id];
+                      if (input) {
+                        input.scrollIntoView({
+                          behavior: "smooth",
+                          block: "center",
+                        });
+                        input.focus();
+                      }
+                    }, 0);
+                  }
+                };
+                return (
                 <div
                   key={post.id}
                   className="rounded-xl border border-slate-800 p-3 sm:p-4"
@@ -915,13 +1724,20 @@ function DashboardPage({ userId = null }) {
                       )}
                     </div>
                   )}
-                    <div className="mt-3 border-t border-slate-800 pt-2.5">
+                  <div className="mt-3 border-t border-slate-800 pt-2.5">
                     <div className="flex items-center justify-between text-[11px] sm:text-xs text-slate-400">
                       <div>
                         {post.like_count || 0}{" "}
                         {post.like_count === 1 ? "like" : "likes"}
                       </div>
-                      <div>0 comments</div>
+                      <button
+                        type="button"
+                        onClick={() => toggleCommentsVisibility(false)}
+                        className="hover:text-slate-200 transition"
+                      >
+                        {commentCount}{" "}
+                        {commentCount === 1 ? "comment" : "comments"}
+                      </button>
                     </div>
                     <div className="mt-2.5 flex items-center justify-between text-xs sm:text-sm text-slate-300">
                       {[
@@ -981,6 +1797,10 @@ function DashboardPage({ userId = null }) {
                           key={action.label}
                           type="button"
                           onClick={() => {
+                            if (action.label === "Comment") {
+                              toggleCommentsVisibility(true);
+                              return;
+                            }
                             if (action.label !== "Like") return;
                             if (!currentUserId) {
                               handleRequireAuth();
@@ -1050,8 +1870,136 @@ function DashboardPage({ userId = null }) {
                       ))}
                     </div>
                   </div>
+                  <div className="mt-4 space-y-4">
+                    {commentsVisible && (
+                      <>
+                        <div className="flex gap-3">
+                          <div className="h-9 w-9 rounded-full border border-slate-800 bg-slate-900/70 flex items-center justify-center text-xs font-semibold text-slate-200 overflow-hidden">
+                            {viewerAvatarUrl ? (
+                              <img
+                                src={viewerAvatarUrl}
+                                alt={viewerName}
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              viewerName.slice(0, 1).toUpperCase()
+                            )}
+                          </div>
+                          <div className="flex-1">
+                          <div className="relative">
+                            <textarea
+                              value={commentDraft}
+                              ref={(el) => {
+                                if (el) {
+                                  commentInputRefs.current[post.id] = el;
+                                }
+                              }}
+                              onChange={(event) =>
+                                setCommentDrafts((prev) => ({
+                                  ...prev,
+                                  [post.id]: event.target.value,
+                                }))
+                              }
+                              rows={2}
+                              placeholder={
+                                currentUserId
+                                  ? "Write a comment..."
+                                  : "Sign in to comment"
+                              }
+                              disabled={!currentUserId}
+                              className="w-full resize-none rounded-lg border border-slate-800 bg-slate-900/60 px-3 py-2 pr-16 pb-10 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60 disabled:opacity-60"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                openGifPicker({ type: "comment", postId: post.id })
+                              }
+                              className="absolute bottom-2 right-2 px-2.5 py-1 text-[11px] text-slate-300 hover:text-slate-100 transition"
+                            >
+                              GIF
+                            </button>
+                          </div>
+                          {commentGif && (
+                            <div className="mt-2 rounded-lg border border-slate-800 overflow-hidden bg-slate-900/40">
+                              <img
+                                src={commentGif.previewUrl || commentGif.url}
+                                alt={commentGif.alt || "GIF"}
+                                className="w-full max-h-56 object-contain"
+                                loading="lazy"
+                              />
+                              <div className="flex justify-end p-2 border-t border-slate-800">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCommentGifByPost((prev) => ({
+                                      ...prev,
+                                      [post.id]: null,
+                                    }))
+                                  }
+                                  className="text-xs text-slate-300 hover:text-slate-100 transition"
+                                >
+                                  Remove GIF
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                            <span>
+                              {currentUserId
+                                ? `Commenting as ${viewerName}`
+                                  : "Sign in to join the conversation."}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => handlePostComment(post.id)}
+                                disabled={
+                                  !currentUserId ||
+                                  (!commentDraft.trim() && !commentGif)
+                                }
+                                className="px-3 py-1 rounded-full border border-slate-700 text-[11px] text-slate-200 hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60 transition"
+                              >
+                                Post
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                        {comments.length === 0 ? (
+                          <div className="text-xs text-slate-500">
+                            No comments yet. Start the conversation.
+                          </div>
+                        ) : (
+                          <>
+                            <div className="space-y-4">
+                              {visibleComments.map((comment) =>
+                                renderCommentThread(comment, 0, post.id, isOwner)
+                              )}
+                            </div>
+                            {shouldCollapseComments && (
+                              <div className="pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setCommentListExpandedByPost((prev) => ({
+                                      ...prev,
+                                      [post.id]: !commentListExpanded,
+                                    }))
+                                  }
+                                  className="text-[11px] text-slate-400 hover:text-slate-200 transition"
+                                >
+                                  {commentListExpanded
+                                    ? "Hide comments"
+                                    : `View ${remainingCommentCount} more comments`}
+                                </button>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </>
+                    )}
+                  </div>
                 </div>
-              ))}
+              );
+            })}
             </div>
           )}
         </section>
@@ -1432,6 +2380,118 @@ function DashboardPage({ userId = null }) {
                   Post
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {gifPickerOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <div
+            className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            onClick={closeGifPicker}
+            role="presentation"
+          />
+          <div className="relative w-full max-w-2xl rounded-2xl border border-slate-800 bg-slate-950 p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-lg font-semibold">Select GIF</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Search and pick a GIF to add to your{" "}
+                  {gifPickerTarget?.type === "reply" ? "reply" : "comment"}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeGifPicker}
+                className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
+              >
+                Close
+              </button>
+            </div>
+            <form
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const trimmed = gifPickerQuery.trim();
+                if (!trimmed) return;
+                setGifPickerLoading(true);
+                setGifPickerError("");
+                if (gifPickerAbortRef.current) {
+                  gifPickerAbortRef.current.abort();
+                }
+                const controller = new AbortController();
+                gifPickerAbortRef.current = controller;
+                try {
+                  const results = await fetchKlipySearch(
+                    trimmed,
+                    controller.signal
+                  );
+                  setGifPickerResults(results);
+                } catch (err) {
+                  if (err?.name !== "AbortError") {
+                    setGifPickerError(err.message || "Unable to load GIFs.");
+                  }
+                } finally {
+                  setGifPickerLoading(false);
+                }
+              }}
+              className="mt-4 flex gap-2"
+            >
+              <input
+                value={gifPickerQuery}
+                onChange={(event) => setGifPickerQuery(event.target.value)}
+                placeholder="Search GIFs"
+                className="w-full rounded-lg border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
+              />
+              <button
+                type="submit"
+                className="px-4 py-2 rounded-lg bg-cyan-500 text-slate-950 text-sm font-medium hover:bg-cyan-400 transition"
+              >
+                Search
+              </button>
+            </form>
+            <div className="mt-4">
+              {gifPickerLoading ? (
+                <div className="text-xs text-slate-400">Loading GIFs...</div>
+              ) : gifPickerError ? (
+                <div className="text-xs text-rose-300">{gifPickerError}</div>
+              ) : gifPickerResults.length === 0 ? (
+                <div className="text-xs text-slate-400">
+                  No GIFs yet. Try searching for something.
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 gap-2 max-h-64 overflow-y-auto pr-1">
+                  {gifPickerResults.map((gif) => (
+                    <button
+                      key={gif.id}
+                      type="button"
+                      onClick={() => {
+                        if (!gifPickerTarget) return;
+                        if (gifPickerTarget.type === "comment") {
+                          setCommentGifByPost((prev) => ({
+                            ...prev,
+                            [gifPickerTarget.postId]: gif,
+                          }));
+                        } else if (gifPickerTarget.type === "reply") {
+                          setReplyGifByComment((prev) => ({
+                            ...prev,
+                            [gifPickerTarget.commentId]: gif,
+                          }));
+                        }
+                        closeGifPicker();
+                      }}
+                      className="rounded-lg overflow-hidden border border-slate-800 hover:border-cyan-400/60 transition"
+                    >
+                      <img
+                        src={gif.previewUrl || gif.url}
+                        alt={gif.alt || "GIF"}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                      />
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
