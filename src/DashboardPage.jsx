@@ -11,6 +11,11 @@ const POSTER_BASE = "https://image.tmdb.org/t/p/w500";
 const COMMENT_COLLAPSE_THRESHOLD = 2;
 const REPLY_COLLAPSE_THRESHOLD = 3;
 const COMMENT_BODY_PREVIEW_LIMIT = 220;
+const POST_BODY_PREVIEW_LIMIT = 260;
+const COMMENT_SORT_OPTIONS = [
+  { value: "recent", label: "Recent" },
+  { value: "mostLiked", label: "Most liked" },
+];
 
 const countCommentThreads = (comments = []) =>
   comments.reduce(
@@ -363,6 +368,7 @@ function DashboardPage({ userId = null }) {
 
   const [posts, setPosts] = useState([]);
   const [commentThreadsByPost, setCommentThreadsByPost] = useState({});
+  const [commentSortByPost, setCommentSortByPost] = useState({});
   const [commentDrafts, setCommentDrafts] = useState({});
   const [commentsExpandedByPost, setCommentsExpandedByPost] = useState({});
   const [commentListExpandedByPost, setCommentListExpandedByPost] = useState({});
@@ -372,6 +378,7 @@ function DashboardPage({ userId = null }) {
   const [repliesExpandedByComment, setRepliesExpandedByComment] = useState({});
   const [replyGifByComment, setReplyGifByComment] = useState({});
   const [expandedCommentBodyById, setExpandedCommentBodyById] = useState({});
+  const [expandedPostBodyById, setExpandedPostBodyById] = useState({});
   const [gifPickerOpen, setGifPickerOpen] = useState(false);
   const [gifPickerTarget, setGifPickerTarget] = useState(null);
   const [gifPickerQuery, setGifPickerQuery] = useState("");
@@ -379,7 +386,9 @@ function DashboardPage({ userId = null }) {
   const [gifPickerLoading, setGifPickerLoading] = useState(false);
   const [gifPickerError, setGifPickerError] = useState("");
   const [editingCommentId, setEditingCommentId] = useState(null);
-  const [editingCommentDraft, setEditingCommentDraft] = useState("");
+  const [editingCommentDrafts, setEditingCommentDrafts] = useState({});
+  const [commentEditSavingById, setCommentEditSavingById] = useState({});
+  const [commentEditErrorById, setCommentEditErrorById] = useState({});
   const [postMessage, setPostMessage] = useState("");
   const [editingPostId, setEditingPostId] = useState(null);
   const [editingBody, setEditingBody] = useState("");
@@ -507,6 +516,34 @@ function DashboardPage({ userId = null }) {
       }
     });
     return roots;
+  };
+
+  const getCommentTimestamp = (comment) => {
+    if (!comment?.createdAt) return 0;
+    const timestamp = new Date(comment.createdAt).getTime();
+    return Number.isFinite(timestamp) ? timestamp : 0;
+  };
+
+  const getThreadLikeScore = (comment) => {
+    const ownLikes = comment?.likes || 0;
+    const replyScores = (comment?.replies || []).map(getThreadLikeScore);
+    if (replyScores.length === 0) return ownLikes;
+    return Math.max(ownLikes, ...replyScores);
+  };
+
+  const sortCommentThreads = (comments = [], sortBy = "recent") => {
+    const sorted = [...comments].sort((a, b) => {
+      if (sortBy === "mostLiked") {
+        const likeDiff = getThreadLikeScore(b) - getThreadLikeScore(a);
+        if (likeDiff !== 0) return likeDiff;
+        return getCommentTimestamp(b) - getCommentTimestamp(a);
+      }
+      return getCommentTimestamp(b) - getCommentTimestamp(a);
+    });
+    return sorted.map((comment) => ({
+      ...comment,
+      replies: sortCommentThreads(comment.replies || [], sortBy),
+    }));
   };
 
   const handlePostComment = async (postId) => {
@@ -750,7 +787,14 @@ function DashboardPage({ userId = null }) {
       return;
     }
     setEditingCommentId(comment.id);
-    setEditingCommentDraft(comment.body || "");
+    setEditingCommentDrafts((prev) => ({
+      ...prev,
+      [comment.id]: comment.body || "",
+    }));
+    setCommentEditErrorById((prev) => ({
+      ...prev,
+      [comment.id]: "",
+    }));
   };
 
   const handleSaveCommentEdit = async (postId, commentId) => {
@@ -758,8 +802,16 @@ function DashboardPage({ userId = null }) {
       handleRequireAuth();
       return;
     }
-    const trimmed = editingCommentDraft.trim();
+    const trimmed = (editingCommentDrafts[commentId] || "").trim();
     if (!trimmed) return;
+    setCommentEditSavingById((prev) => ({
+      ...prev,
+      [commentId]: true,
+    }));
+    setCommentEditErrorById((prev) => ({
+      ...prev,
+      [commentId]: "",
+    }));
     try {
       const response = await fetch(`${API_BASE}/api/comments/${commentId}`, {
         method: "PATCH",
@@ -768,7 +820,14 @@ function DashboardPage({ userId = null }) {
         body: JSON.stringify({ body: trimmed }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok || !data?.comment) return;
+      if (!response.ok || !data?.comment) {
+        setCommentEditErrorById((prev) => ({
+          ...prev,
+          [commentId]:
+            data?.message || "Unable to save comment. Please try again.",
+        }));
+        return;
+      }
       const updatedComment = mapApiComment(data.comment);
       setCommentThreadsByPost((prev) => {
         const current = prev[postId] || [];
@@ -781,9 +840,25 @@ function DashboardPage({ userId = null }) {
         return { ...prev, [postId]: nextThreads };
       });
       setEditingCommentId(null);
-      setEditingCommentDraft("");
+      setEditingCommentDrafts((prev) => {
+        const { [commentId]: _, ...rest } = prev;
+        return rest;
+      });
+      setExpandedCommentBodyById((prev) => ({
+        ...prev,
+        [commentId]: true,
+      }));
     } catch (err) {
+      setCommentEditErrorById((prev) => ({
+        ...prev,
+        [commentId]: "Network error. Please try again.",
+      }));
       // ignore for now
+    } finally {
+      setCommentEditSavingById((prev) => {
+        const { [commentId]: _, ...rest } = prev;
+        return rest;
+      });
     }
   };
 
@@ -806,8 +881,19 @@ function DashboardPage({ userId = null }) {
       });
       if (editingCommentId === commentId) {
         setEditingCommentId(null);
-        setEditingCommentDraft("");
+        setEditingCommentDrafts((prev) => {
+          const { [commentId]: _, ...rest } = prev;
+          return rest;
+        });
       }
+      setCommentEditSavingById((prev) => {
+        const { [commentId]: _, ...rest } = prev;
+        return rest;
+      });
+      setCommentEditErrorById((prev) => {
+        const { [commentId]: _, ...rest } = prev;
+        return rest;
+      });
       setReplyOpenByComment((prev) => {
         if (!prev[commentId]) return prev;
         const { [commentId]: _, ...rest } = prev;
@@ -834,6 +920,19 @@ function DashboardPage({ userId = null }) {
     return name === "You";
   };
 
+  const navigateToDashboard = (targetUserId) => {
+    const nextId = Number(targetUserId);
+    if (!Number.isFinite(nextId) || nextId <= 0) return;
+    const nextHash = `#dashboard?userId=${nextId}`;
+    setViewingUserId(nextId);
+    if (window.location.hash === nextHash) {
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    } else {
+      window.location.hash = nextHash;
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   const renderCommentThread = (comment, depth = 0, postId, isPostOwner) => {
     const authorName = comment.author?.name || "User";
     const authorId = comment.author?.id;
@@ -846,6 +945,9 @@ function DashboardPage({ userId = null }) {
     const canEdit = isCommentOwner(comment);
     const canDelete = isPostOwner || canEdit;
     const replyGif = replyGifByComment[comment.id] || null;
+    const editingDraft = editingCommentDrafts[comment.id] ?? "";
+    const editSaving = !!commentEditSavingById[comment.id];
+    const editError = commentEditErrorById[comment.id] || "";
     const commentBody = comment.body || "";
     const isLongComment = commentBody.length > COMMENT_BODY_PREVIEW_LIMIT;
     const commentExpanded = !!expandedCommentBodyById[comment.id];
@@ -872,30 +974,47 @@ function DashboardPage({ userId = null }) {
         className={depth > 0 ? "pl-4 border-l border-slate-800" : ""}
       >
         <div className="flex gap-3">
-          <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900/70 flex items-center justify-center text-xs font-semibold text-slate-200 overflow-hidden">
-            {authorAvatar ? (
-              <img
-                src={authorAvatar}
-                alt={authorName}
-                className="h-full w-full object-cover"
-              />
-            ) : (
-              authorName.slice(0, 1).toUpperCase()
-            )}
-          </div>
+          {authorId ? (
+            <a
+              href={`#dashboard?userId=${authorId}`}
+              onClick={() => navigateToDashboard(authorId)}
+              aria-label={`View ${authorName} profile`}
+              className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900/70 flex items-center justify-center text-xs font-semibold text-slate-200 overflow-hidden hover:border-cyan-400/60 transition"
+            >
+              {authorAvatar ? (
+                <img
+                  src={authorAvatar}
+                  alt={authorName}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                authorName.slice(0, 1).toUpperCase()
+              )}
+            </a>
+          ) : (
+            <div className="h-8 w-8 rounded-full border border-slate-800 bg-slate-900/70 flex items-center justify-center text-xs font-semibold text-slate-200 overflow-hidden">
+              {authorAvatar ? (
+                <img
+                  src={authorAvatar}
+                  alt={authorName}
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                authorName.slice(0, 1).toUpperCase()
+              )}
+            </div>
+          )}
           <div className="flex-1 min-w-0">
             <div className="rounded-lg border border-slate-800 bg-slate-900/40 px-3 py-2">
               <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
                 {authorId ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      window.location.hash = `#dashboard?userId=${authorId}`;
-                    }}
+                  <a
+                    href={`#dashboard?userId=${authorId}`}
+                    onClick={() => navigateToDashboard(authorId)}
                     className="font-semibold text-slate-100 hover:text-cyan-300 transition"
                   >
                     {authorName}
-                  </button>
+                  </a>
                 ) : (
                   <span className="font-semibold text-slate-100">
                     {authorName}
@@ -906,9 +1025,12 @@ function DashboardPage({ userId = null }) {
               {isEditing ? (
                 <div className="mt-2 space-y-2">
                   <textarea
-                    value={editingCommentDraft}
+                    value={editingDraft}
                     onChange={(event) =>
-                      setEditingCommentDraft(event.target.value)
+                      setEditingCommentDrafts((prev) => ({
+                        ...prev,
+                        [comment.id]: event.target.value,
+                      }))
                     }
                     rows={2}
                     className="w-full resize-none rounded-md border border-slate-800 bg-slate-950/70 px-2 py-1 text-xs text-slate-100 focus:outline-none focus:ring-2 focus:ring-cyan-500/60"
@@ -917,22 +1039,36 @@ function DashboardPage({ userId = null }) {
                     <button
                       type="button"
                       onClick={() => handleSaveCommentEdit(postId, comment.id)}
-                      disabled={!editingCommentDraft.trim()}
+                      disabled={editSaving || !editingDraft.trim()}
                       className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:border-slate-500 disabled:cursor-not-allowed disabled:opacity-60 transition"
                     >
-                      Save
+                      {editSaving ? "Saving..." : "Save"}
                     </button>
                     <button
                       type="button"
                       onClick={() => {
                         setEditingCommentId(null);
-                        setEditingCommentDraft("");
+                        setEditingCommentDrafts((prev) => {
+                          const { [comment.id]: _, ...rest } = prev;
+                          return rest;
+                        });
+                        setCommentEditSavingById((prev) => {
+                          const { [comment.id]: _, ...rest } = prev;
+                          return rest;
+                        });
+                        setCommentEditErrorById((prev) => {
+                          const { [comment.id]: _, ...rest } = prev;
+                          return rest;
+                        });
                       }}
                       className="rounded-full border border-slate-700 px-2.5 py-1 text-[11px] text-slate-200 hover:border-slate-500 transition"
                     >
                       Cancel
                     </button>
                   </div>
+                  {editError && (
+                    <div className="text-[11px] text-rose-300">{editError}</div>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1419,8 +1555,18 @@ function DashboardPage({ userId = null }) {
             <div className="mt-6 space-y-4 max-w-2xl mx-auto">
               {posts.map((post) => {
                 const comments = commentThreadsByPost[post.id] || [];
-                const commentCount = countCommentThreads(comments);
-                const topLevelCommentCount = comments.length;
+                const commentSort = commentSortByPost[post.id] || "recent";
+                const sortedComments = sortCommentThreads(comments, commentSort);
+                const commentCount = countCommentThreads(sortedComments);
+                const topLevelCommentCount = sortedComments.length;
+                const postAuthorId =
+                  post.user_id || viewingUserId || user.id || null;
+                const postBody = post.body || "";
+                const isLongPost = postBody.length > POST_BODY_PREVIEW_LIMIT;
+                const postExpanded = !!expandedPostBodyById[post.id];
+                const postPreview = isLongPost
+                  ? `${postBody.slice(0, POST_BODY_PREVIEW_LIMIT)}...`
+                  : postBody;
                 const commentDraft = commentDrafts[post.id] || "";
                 const commentGif = commentGifByPost[post.id] || null;
                 const commentsVisible = commentsExpandedByPost[post.id] ?? false;
@@ -1430,8 +1576,8 @@ function DashboardPage({ userId = null }) {
                   topLevelCommentCount > COMMENT_COLLAPSE_THRESHOLD;
                 const visibleComments =
                   commentListExpanded || !shouldCollapseComments
-                    ? comments
-                    : comments.slice(0, COMMENT_COLLAPSE_THRESHOLD);
+                    ? sortedComments
+                    : sortedComments.slice(0, COMMENT_COLLAPSE_THRESHOLD);
                 const remainingCommentCount =
                   topLevelCommentCount - visibleComments.length;
                 const toggleCommentsVisibility = (shouldFocusInput = false) => {
@@ -1467,8 +1613,13 @@ function DashboardPage({ userId = null }) {
                   <div className="flex items-center justify-between gap-3">
                     <button
                       type="button"
+                      onClick={() => {
+                        if (postAuthorId) {
+                          navigateToDashboard(postAuthorId);
+                        }
+                      }}
                       className="flex items-center gap-3 text-left"
-                      title="View post"
+                      title="View profile"
                     >
                       <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full overflow-hidden border border-slate-800 bg-slate-900/70 flex items-center justify-center text-sm sm:text-base font-semibold text-slate-200">
                         {displayAvatarUrl ? (
@@ -1720,9 +1871,23 @@ function DashboardPage({ userId = null }) {
                     </div>
                   ) : (
                     <div className="mt-3 space-y-3">
-                      {post.body && (
-                        <p className="text-base sm:text-lg text-slate-100">
-                          {post.body}
+                      {postBody && (
+                        <p className="text-base sm:text-lg text-slate-100 whitespace-pre-wrap break-words">
+                          {postExpanded ? postBody : postPreview}
+                          {isLongPost && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedPostBodyById((prev) => ({
+                                  ...prev,
+                                  [post.id]: !postExpanded,
+                                }))
+                              }
+                              className="ml-2 inline whitespace-nowrap text-[11px] text-slate-400 hover:text-slate-200 transition align-baseline"
+                            >
+                              {postExpanded ? "See less" : "See more"}
+                            </button>
+                          )}
                         </p>
                       )}
                       {post.gif_url && (
@@ -1982,6 +2147,34 @@ function DashboardPage({ userId = null }) {
                           </div>
                         ) : (
                           <>
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-500">
+                              <span className="text-slate-400">
+                                Sort comments:
+                              </span>
+                              {COMMENT_SORT_OPTIONS.map((option, index) => {
+                                const isActive = commentSort === option.value;
+                                return (
+                                  <button
+                                    key={option.value}
+                                    type="button"
+                                    onClick={() =>
+                                      setCommentSortByPost((prev) => ({
+                                        ...prev,
+                                        [post.id]: option.value,
+                                      }))
+                                    }
+                                    aria-pressed={isActive}
+                                    className={`rounded-full border px-2.5 py-1 transition ${
+                                      isActive
+                                        ? "border-cyan-400/60 bg-cyan-500/10 text-cyan-200"
+                                        : "border-slate-800 text-slate-400 hover:text-slate-200"
+                                    }`}
+                                  >
+                                    {`${index + 1}) ${option.label}`}
+                                  </button>
+                                );
+                              })}
+                            </div>
                             <div className="space-y-4">
                               {visibleComments.map((comment) =>
                                 renderCommentThread(comment, 0, post.id, isOwner)

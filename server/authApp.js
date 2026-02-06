@@ -1109,7 +1109,7 @@ export const getAuthApp = () => {
       if (!comment) {
         return res.status(404).json({ message: "Comment not found." });
       }
-      if (comment.user_id !== req.user.id) {
+      if (Number(comment.user_id) !== Number(req.user.id)) {
         return res.status(403).json({ message: "Not allowed." });
       }
       const updated = await pool.query(
@@ -1162,7 +1162,10 @@ export const getAuthApp = () => {
       if (!row) {
         return res.status(404).json({ message: "Comment not found." });
       }
-      if (row.user_id !== req.user.id && row.post_owner !== req.user.id) {
+      if (
+        Number(row.user_id) !== Number(req.user.id) &&
+        Number(row.post_owner) !== Number(req.user.id)
+      ) {
         return res.status(403).json({ message: "Not allowed." });
       }
       await pool.query("DELETE FROM post_comments WHERE id = $1", [commentId]);
@@ -2086,7 +2089,7 @@ export const getAuthApp = () => {
       if (!list) {
         return res.status(404).json({ message: "List not found." });
       }
-      if (list.user_id !== req.user.id) {
+      if (Number(list.user_id) !== Number(req.user.id)) {
         return res.status(403).json({ message: "Not allowed." });
       }
       const result = await pool.query(
