@@ -10,6 +10,7 @@ import ResetPasswordPage from "./ResetPasswordPage.jsx";
 import ActorPage from "./ActorPage.jsx";
 import DiscoverPage from "./DiscoverPage.jsx";
 import DashboardPage from "./DashboardPage.jsx";
+import FeedPage from "./FeedPage.jsx";
 
 const parseHash = () => {
   const hash = window.location.hash || "";
@@ -38,6 +39,9 @@ const parseHash = () => {
   }
   if (hash.startsWith("#discover")) {
     return { page: "discover" };
+  }
+  if (hash.startsWith("#feed")) {
+    return { page: "feed" };
   }
   if (hash.startsWith("#dashboard")) {
     const query = hash.includes("?") ? hash.split("?")[1] : "";
@@ -112,6 +116,10 @@ function App() {
 
   if (route.page === "discover") {
     return <DiscoverPage />;
+  }
+
+  if (route.page === "feed") {
+    return <FeedPage />;
   }
 
   if (route.page === "dashboard") {

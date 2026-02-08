@@ -2,6 +2,9 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import cors from "cors";
 import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 import session from "express-session";
 import multer from "multer";
 import nodemailer from "nodemailer";
@@ -12,6 +15,111 @@ import OpenAI from "openai";
 import { DeleteObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { pool } from "./db.js";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const NEWS_CACHE_FILE = path.join(__dirname, "newsCache.json");
+const NEWS_CACHE_TTL_MS = 48 * 60 * 60 * 1000;
+const NEWSDATA_API_KEY = process.env.NEWSDATA_API_KEY || "";
+
+let newsCacheLoaded = false;
+let newsCache = { fetchedAtMs: 0, fetchedAt: "", items: [] };
+let newsFetchPromise = null;
+
+const parseFetchedAt = (value) => {
+  if (!value) return 0;
+  if (typeof value === "number") {
+    return value < 1e12 ? value * 1000 : value;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return 0;
+    const normalized = trimmed.includes("T")
+      ? trimmed
+      : trimmed.replace(" ", "T");
+    const withZone =
+      /Z$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}Z`;
+    const parsed = Date.parse(withZone);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+  return 0;
+};
+
+const formatFetchedAt = (ms) => (ms ? new Date(ms).toISOString() : "");
+
+const setNewsCache = (items, fetchedAtMs) => {
+  const safeItems = Array.isArray(items) ? items : [];
+  const safeFetchedAtMs = Number.isFinite(fetchedAtMs) ? fetchedAtMs : 0;
+  newsCache = {
+    fetchedAtMs: safeFetchedAtMs,
+    fetchedAt: formatFetchedAt(safeFetchedAtMs),
+    items: safeItems,
+  };
+  return newsCache;
+};
+
+const loadNewsCache = async () => {
+  if (newsCacheLoaded) {
+    return;
+  }
+  newsCacheLoaded = true;
+  try {
+    const raw = await fs.readFile(NEWS_CACHE_FILE, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && Array.isArray(parsed.items)) {
+      const fetchedAtMs = parseFetchedAt(
+        parsed.fetched_at || parsed.fetchedAt || parsed.fetchedAtMs
+      );
+      setNewsCache(parsed.items, fetchedAtMs);
+    }
+  } catch (err) {
+    // ignore missing/invalid cache
+  }
+};
+
+const isNewsCacheFresh = (timestampMs) =>
+  Boolean(timestampMs) && Date.now() - timestampMs < NEWS_CACHE_TTL_MS;
+
+const normalizeNewsResults = (payload) => {
+  const raw = Array.isArray(payload?.results) ? payload.results : [];
+  return raw.map((item) => ({
+    id: item?.article_id || item?.link || item?.url || item?.title,
+    title: item?.title || "Untitled",
+    description: item?.description || item?.content || item?.summary || "",
+    source:
+      item?.source_name ||
+      item?.source_id ||
+      item?.source ||
+      item?.sourceId ||
+      "",
+    published:
+      item?.pubDate || item?.publishedAt || item?.published_at || "",
+    image: item?.image_url || item?.image || item?.imageUrl || "",
+    link: item?.link || item?.url || "",
+  }));
+};
+
+const fetchNewsData = async () => {
+  if (!NEWSDATA_API_KEY) {
+    throw new Error("Missing Newsdata API key.");
+  }
+  const url = `https://newsdata.io/api/1/latest?apikey=${encodeURIComponent(
+    NEWSDATA_API_KEY
+  )}&q=movie&country=us&language=en`;
+  const res = await fetch(url);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data?.message || `Request failed (${res.status}).`);
+  }
+  const items = normalizeNewsResults(data);
+  const fetchedAtMs = Date.now();
+  const payload = {
+    fetched_at: formatFetchedAt(fetchedAtMs),
+    items,
+  };
+  await fs.writeFile(NEWS_CACHE_FILE, JSON.stringify(payload), "utf8");
+  return setNewsCache(items, fetchedAtMs);
+};
 let cachedApp;
 let resetTableReady = false;
 let listCollaboratorsReady = false;
@@ -824,6 +932,83 @@ export const getAuthApp = () => {
          ORDER BY posts.created_at DESC`,
         [req.user.id]
       );
+      return res.json({ posts: result.rows });
+    } catch (err) {
+      return next(err);
+    }
+  });
+
+  app.get("/api/posts/feed", async (req, res, next) => {
+    try {
+      await ensurePostsTable();
+      await ensurePostLikesTable();
+      await ensurePostCommentsTable();
+      const viewerId = req.isAuthenticated() ? req.user.id : null;
+      const result = viewerId
+        ? await pool.query(
+            `SELECT posts.id,
+                    posts.user_id,
+                    posts.body,
+                    posts.gif_url,
+                    posts.gif_preview_url,
+                    posts.gif_alt,
+                    posts.created_at,
+                    posts.updated_at,
+                    users.username,
+                    users.avatar,
+                    COALESCE(likes.like_count, 0) AS like_count,
+                    COALESCE(comments.comment_count, 0) AS comment_count,
+                    COALESCE(user_likes.is_liked, false) AS liked
+             FROM posts
+             JOIN users ON users.id = posts.user_id
+             LEFT JOIN (
+               SELECT post_id, COUNT(*)::int AS like_count
+               FROM post_likes
+               GROUP BY post_id
+             ) likes ON likes.post_id = posts.id
+             LEFT JOIN (
+               SELECT post_id, COUNT(*)::int AS comment_count
+               FROM post_comments
+               WHERE deleted_at IS NULL
+               GROUP BY post_id
+             ) comments ON comments.post_id = posts.id
+             LEFT JOIN (
+               SELECT post_id, TRUE AS is_liked
+               FROM post_likes
+               WHERE user_id = $1
+             ) user_likes ON user_likes.post_id = posts.id
+             ORDER BY posts.created_at DESC`,
+            [viewerId]
+          )
+        : await pool.query(
+            `SELECT posts.id,
+                    posts.user_id,
+                    posts.body,
+                    posts.gif_url,
+                    posts.gif_preview_url,
+                    posts.gif_alt,
+                    posts.created_at,
+                    posts.updated_at,
+                    users.username,
+                    users.avatar,
+                    COALESCE(likes.like_count, 0) AS like_count,
+                    COALESCE(comments.comment_count, 0) AS comment_count,
+                    FALSE AS liked
+             FROM posts
+             JOIN users ON users.id = posts.user_id
+             LEFT JOIN (
+               SELECT post_id, COUNT(*)::int AS like_count
+               FROM post_likes
+               GROUP BY post_id
+             ) likes ON likes.post_id = posts.id
+             LEFT JOIN (
+               SELECT post_id, COUNT(*)::int AS comment_count
+               FROM post_comments
+               WHERE deleted_at IS NULL
+               GROUP BY post_id
+             ) comments ON comments.post_id = posts.id
+             ORDER BY posts.created_at DESC`
+          );
       return res.json({ posts: result.rows });
     } catch (err) {
       return next(err);
@@ -2178,6 +2363,49 @@ export const getAuthApp = () => {
       return res.json({ ok: true, listId: list.id });
     } catch (err) {
       return next(err);
+    }
+  });
+
+  app.get("/api/news/movie", async (req, res) => {
+    try {
+      await loadNewsCache();
+      if (isNewsCacheFresh(newsCache.fetchedAtMs) && newsCache.items.length) {
+        return res.json({
+          ok: true,
+          cached: true,
+          fetched_at: newsCache.fetchedAt,
+          fetchedAt: newsCache.fetchedAtMs,
+          items: newsCache.items,
+        });
+      }
+      if (!newsFetchPromise) {
+        newsFetchPromise = fetchNewsData().finally(() => {
+          newsFetchPromise = null;
+        });
+      }
+      const payload = await newsFetchPromise;
+      return res.json({
+        ok: true,
+        cached: false,
+        fetched_at: payload.fetchedAt,
+        fetchedAt: payload.fetchedAtMs,
+        items: payload.items,
+      });
+    } catch (err) {
+      if (newsCache?.items?.length) {
+        return res.json({
+          ok: true,
+          cached: true,
+          stale: true,
+          fetched_at: newsCache.fetchedAt,
+          fetchedAt: newsCache.fetchedAtMs,
+          items: newsCache.items,
+          error: err?.message || "Unable to refresh feed.",
+        });
+      }
+      return res
+        .status(502)
+        .json({ ok: false, message: err?.message || "Unable to load news." });
     }
   });
 

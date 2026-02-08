@@ -1644,7 +1644,7 @@ function DashboardPage({ userId = null }) {
                               : ""
                           }
                         >
-                          {formatPostTime(post.created_at)} · Public
+                          {formatPostTime(post.created_at)} | Public
                         </div>
                       </div>
                     </button>
@@ -1659,7 +1659,7 @@ function DashboardPage({ userId = null }) {
                       }
                         className="rounded-full border border-slate-800 px-2.5 py-1 text-xs text-slate-300 hover:border-slate-600 hover:text-slate-100 transition"
                       >
-                        ···
+                        ...
                       </button>
                       {activeMenuId === post.id && (
                         <div className="absolute right-0 mt-2 w-36 rounded-xl border border-slate-800 bg-slate-950/95 shadow-xl">
